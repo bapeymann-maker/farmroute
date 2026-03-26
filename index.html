@@ -24,8 +24,53 @@
 html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background:var(--soil);color:var(--text);}
 #layout{display:flex;height:100vh;}
 
-/* SIDEBAR */
-#sidebar{width:360px;min-width:360px;background:var(--soil-mid);border-right:2px solid var(--border);display:flex;flex-direction:column;overflow:hidden;}
+/* SIDEBAR COLLAPSE */
+#sidebar{width:360px;min-width:360px;background:var(--soil-mid);border-right:2px solid var(--border);display:flex;flex-direction:column;overflow:hidden;transition:width 0.25s ease,min-width 0.25s ease;}
+#sidebar.collapsed{width:48px;min-width:48px;}
+#sidebar.collapsed .sidebar-header-content,
+#sidebar.collapsed .sidebar-scroll,
+#sidebar.collapsed .legend-bar{display:none;}
+#sidebar-toggle{position:absolute;top:50%;transform:translateY(-50%);right:-16px;z-index:2000;width:16px;height:48px;background:var(--border-bright);border:none;border-radius:0 6px 6px 0;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text);font-size:0.7rem;padding:0;}
+#sidebar-toggle:hover{background:var(--gold);color:var(--soil);}
+#sidebar-inner{position:relative;display:flex;flex-direction:column;height:100%;overflow:hidden;}
+.sidebar-collapsed-icons{display:none;flex-direction:column;align-items:center;gap:14px;padding:14px 6px;flex:1;}
+#sidebar.collapsed .sidebar-collapsed-icons{display:flex;}
+.collapsed-icon-btn{background:transparent;border:1px solid var(--border);border-radius:6px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:1rem;color:var(--text-dim);transition:all 0.15s;}
+.collapsed-icon-btn:hover,.collapsed-icon-btn.active{background:var(--gold);color:var(--soil);border-color:var(--gold);}
+
+/* MOBILE — sidebar slides over map as a drawer */
+@media (max-width: 700px) {
+  #layout{position:relative;}
+  #sidebar{
+    position:absolute;left:0;top:0;bottom:0;z-index:1500;
+    width:320px;min-width:320px;
+    transform:translateX(0);
+    transition:transform 0.25s ease;
+    box-shadow:4px 0 24px rgba(0,0,0,0.6);
+  }
+  #sidebar.collapsed{
+    transform:translateX(-100%);
+    width:320px;min-width:320px;
+  }
+  #sidebar.collapsed .sidebar-header-content,
+  #sidebar.collapsed .sidebar-scroll,
+  #sidebar.collapsed .legend-bar{display:flex;}
+  #sidebar.collapsed .sidebar-header-content{display:block;}
+  #sidebar.collapsed .sidebar-scroll{display:block;}  
+  #sidebar.collapsed .legend-bar{display:block;}
+  #sidebar.collapsed .sidebar-collapsed-icons{display:none;}
+  #sidebar-toggle{
+    right:-40px;
+    width:40px;height:48px;
+    background:var(--soil-mid);
+    border:2px solid var(--border);
+    border-left:none;
+    border-radius:0 8px 8px 0;
+    box-shadow:3px 0 10px rgba(0,0,0,0.4);
+  }
+  #map-wrap{position:absolute;inset:0;width:100%;height:100%;}
+  #map{width:100%;height:100%;}
+}
 .sidebar-header{background:var(--soil);padding:14px 16px 12px;border-bottom:2px solid var(--border);flex-shrink:0;}
 .app-brand{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
 .brand-name{font-family:'Barlow Condensed',sans-serif;font-size:1.4rem;font-weight:900;color:var(--gold-light);letter-spacing:2px;text-transform:uppercase;line-height:1;}
@@ -241,28 +286,42 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
 
 <!-- SIDEBAR -->
 <div id="sidebar">
-  <div class="sidebar-header">
-    <div class="app-brand">
-      <div style="font-size:1.5rem">🌾</div>
-      <div>
-        <div class="brand-name">FarmRoute</div>
-        <div class="brand-tagline">Farm Road Navigation System</div>
+  <div id="sidebar-inner">
+
+    <!-- Toggle button -->
+    <button id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle menu">◀</button>
+
+    <!-- Collapsed icon strip (desktop only) -->
+    <div class="sidebar-collapsed-icons">
+      <button class="collapsed-icon-btn" onclick="expandAndMode('admin')" title="Admin Setup">⚙</button>
+      <button class="collapsed-icon-btn" onclick="expandAndMode('employee')" title="Route Planner">🚜</button>
+    </div>
+
+    <!-- Full sidebar content -->
+    <div class="sidebar-header-content">
+      <div class="sidebar-header">
+        <div class="app-brand">
+          <div style="font-size:1.5rem">🌾</div>
+          <div>
+            <div class="brand-name">FarmRoute</div>
+            <div class="brand-tagline">Farm Road Navigation System</div>
+          </div>
+        </div>
+        <div id="user-bar">
+          <div style="font-size:1.1rem">👤</div>
+          <div id="user-bar-info">
+            <div id="user-bar-name">—</div>
+            <div id="user-bar-role">—</div>
+          </div>
+          <div id="sync-dot" title="Synced"></div>
+          <button id="user-bar-signout" onclick="doSignOut()">Sign Out</button>
+        </div>
+        <div class="mode-tabs">
+          <button class="mode-tab active" id="tab-admin" onclick="setMode('admin')">⚙ Admin Setup</button>
+          <button class="mode-tab" id="tab-emp" onclick="setMode('employee')">🚜 Route Planner</button>
+        </div>
       </div>
     </div>
-    <div id="user-bar">
-      <div style="font-size:1.1rem">👤</div>
-      <div id="user-bar-info">
-        <div id="user-bar-name">—</div>
-        <div id="user-bar-role">—</div>
-      </div>
-      <div id="sync-dot" title="Synced"></div>
-      <button id="user-bar-signout" onclick="doSignOut()">Sign Out</button>
-    </div>
-    <div class="mode-tabs">
-      <button class="mode-tab active" id="tab-admin" onclick="setMode('admin')">⚙ Admin Setup</button>
-      <button class="mode-tab" id="tab-emp" onclick="setMode('employee')">🚜 Route Planner</button>
-    </div>
-  </div>
 
   <div class="sidebar-scroll">
 
@@ -429,7 +488,7 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
       <div class="legend-item"><div class="legend-swatch" style="background:#888;"></div>OSM Roads</div>
       <div class="legend-item"><div class="legend-swatch" style="background:#e84040;height:5px"></div>Route</div>
     </div>
-  </div>
+  </div><!-- /sidebar-inner -->
 </div><!-- /sidebar -->
 
 <!-- MAP -->
@@ -437,6 +496,14 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
   <div id="map"></div>
   <div class="map-hint" id="map-hint">Click map to place location</div>
   <div class="draw-hint" id="draw-hint">Click map to add road points — double-click or press Enter to finish</div>
+  <!-- Mobile menu button (visible when sidebar is collapsed on mobile) -->
+  <button id="mobile-menu-btn" onclick="toggleSidebar()" style="
+    display:none;position:absolute;top:12px;left:12px;z-index:1400;
+    background:var(--soil-mid);border:2px solid var(--border-bright);
+    border-radius:8px;padding:10px 14px;
+    font-family:'Barlow Condensed',sans-serif;font-size:0.85rem;font-weight:800;
+    text-transform:uppercase;letter-spacing:1px;color:var(--gold-light);cursor:pointer;
+    box-shadow:0 3px 12px rgba(0,0,0,0.5);">☰ Menu</button>
 </div>
 
 </div><!-- /layout -->
@@ -1695,6 +1762,46 @@ function showHint(txt) { const h = document.getElementById('map-hint'); h.textCo
 function hideHint() { document.getElementById('map-hint').style.display = 'none'; }
 
 // ================================================================
+// SIDEBAR TOGGLE
+// ================================================================
+let sidebarCollapsed = false;
+const isMobile = () => window.innerWidth <= 700;
+
+function toggleSidebar() {
+  sidebarCollapsed = !sidebarCollapsed;
+  const sb = document.getElementById('sidebar');
+  const btn = document.getElementById('sidebar-toggle');
+  const mobileBtn = document.getElementById('mobile-menu-btn');
+
+  sb.classList.toggle('collapsed', sidebarCollapsed);
+
+  if (isMobile()) {
+    btn.textContent = sidebarCollapsed ? '▶' : '◀';
+    mobileBtn.style.display = sidebarCollapsed ? 'block' : 'none';
+  } else {
+    btn.textContent = sidebarCollapsed ? '▶' : '◀';
+  }
+  setTimeout(() => map.invalidateSize(), 260);
+}
+
+function expandAndMode(m) {
+  if (sidebarCollapsed) toggleSidebar();
+  setMode(m);
+}
+
+// Collapse sidebar by default on mobile after login
+function initMobileLayout() {
+  if (isMobile()) {
+    sidebarCollapsed = false; // start open so user sees menu, then they can close
+    document.getElementById('mobile-menu-btn').style.display = 'none';
+    // Auto-collapse after a moment so map is visible
+    setTimeout(() => {
+      toggleSidebar();
+    }, 800);
+  }
+}
+
+// ================================================================
 // SUPABASE — CONFIG & CLIENT
 // ================================================================
 const SB_URL  = 'https://xnlnqovphvfeunjamwdr.supabase.co';
@@ -1774,7 +1881,7 @@ async function onSignedIn(user) {
 
   // Hide login, show app
   document.getElementById('login-screen').classList.add('hidden');
-  setTimeout(() => map.invalidateSize(), 150);
+  setTimeout(() => { map.invalidateSize(); initMobileLayout(); }, 150);
 
   // Set up realtime sync
   setupRealtime();
