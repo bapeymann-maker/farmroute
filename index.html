@@ -269,30 +269,46 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
   background:var(--soil-mid);
   border-top:2px solid var(--gold);
   border-radius:16px 16px 0 0;
-  padding:16px 16px 20px;
   box-shadow:0 -6px 30px rgba(0,0,0,0.6);
-  max-height:75vh;
-  overflow-y:auto;
+  max-height:82vh;
+  display:flex;
+  flex-direction:column;
   transform:translateY(100%);
   transition:transform 0.3s ease;
 }
 #map-sheet.open{
-  display:block;
+  display:flex;
   transform:translateY(0);
 }
-.sheet-handle{width:40px;height:4px;background:var(--border-bright);border-radius:2px;margin:0 auto 14px;cursor:pointer;}
-.sheet-title{font-family:'Barlow Condensed',sans-serif;font-size:1rem;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--gold-light);margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border);}
-.sheet-desc{font-size:0.82rem;color:var(--text-dim);margin-bottom:14px;line-height:1.5;}
+#map-sheet-scroll{
+  flex:1;
+  overflow-y:auto;
+  padding:0 16px 8px;
+  -webkit-overflow-scrolling:touch;
+}
+#map-sheet-header{
+  padding:12px 16px 0;
+  flex-shrink:0;
+}
+#map-sheet-footer{
+  flex-shrink:0;
+  padding:10px 16px 20px;
+  border-top:1px solid var(--border);
+  background:var(--soil-mid);
+}
+.sheet-handle{width:40px;height:4px;background:var(--border-bright);border-radius:2px;margin:0 auto 12px;cursor:pointer;}
+.sheet-title{font-family:'Barlow Condensed',sans-serif;font-size:1rem;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--gold-light);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border);}
+.sheet-desc{font-size:0.82rem;color:var(--text-dim);margin-bottom:12px;line-height:1.5;}
 .sheet-choice-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;}
 .sheet-choice-btn{padding:14px 10px;border:2px solid var(--border);border-radius:8px;background:var(--card-bg);cursor:pointer;text-align:center;transition:all 0.15s;}
 .sheet-choice-btn:hover{border-color:var(--gold);}
 .sheet-choice-btn .scb-icon{font-size:1.6rem;display:block;margin-bottom:6px;}
 .sheet-choice-btn .scb-label{font-family:'Barlow Condensed',sans-serif;font-size:0.88rem;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;color:var(--gold-light);}
 .sheet-choice-btn .scb-sub{font-size:0.7rem;color:var(--text-muted);margin-top:2px;}
-.sheet-segpick-status{background:var(--soil);border:2px solid var(--gold);border-radius:8px;padding:12px;margin-bottom:12px;}
+.sheet-segpick-status{background:var(--soil);border:2px solid var(--gold);border-radius:8px;padding:12px;margin-bottom:10px;}
 .sheet-step{font-family:'Barlow Condensed',sans-serif;font-size:1rem;font-weight:800;color:var(--gold-light);margin-bottom:4px;}
 .sheet-step-msg{font-size:0.84rem;color:var(--text);line-height:1.5;}
-.sheet-actions{display:flex;gap:8px;margin-top:12px;}
+.sheet-actions{display:flex;gap:8px;align-items:center;}
 
 /* On desktop: classify panel stays in sidebar, sheet is hidden */
 @media (min-width:701px) {
@@ -556,78 +572,89 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
 
   <!-- MAP BOTTOM SHEET (mobile classify flow) -->
   <div id="map-sheet">
-    <div class="sheet-handle" onclick="closeMapSheet()"></div>
 
-    <!-- Sheet: Step 1 — choice -->
-    <div id="sheet-choice">
-      <div class="sheet-title" id="sheet-road-name">🛣 Road Selected</div>
-      <div class="sheet-desc" id="sheet-road-desc">Choose how to approve this road:</div>
-      <div class="sheet-choice-btns">
-        <div class="sheet-choice-btn" onclick="chooseWholeRoad()">
-          <span class="scb-icon">✅</span>
-          <div class="scb-label">Whole Road</div>
-          <div class="scb-sub">Approve entire length</div>
+    <!-- Fixed header with handle -->
+    <div id="map-sheet-header">
+      <div class="sheet-handle" onclick="closeMapSheet()"></div>
+
+      <!-- Sheet: Step 1 — choice (header only, no footer needed) -->
+      <div id="sheet-choice">
+        <div class="sheet-title" id="sheet-road-name">🛣 Road Selected</div>
+        <div class="sheet-desc" id="sheet-road-desc">Choose how to approve this road:</div>
+        <div class="sheet-choice-btns">
+          <div class="sheet-choice-btn" onclick="chooseWholeRoad()">
+            <span class="scb-icon">✅</span>
+            <div class="scb-label">Whole Road</div>
+            <div class="scb-sub">Approve entire length</div>
+          </div>
+          <div class="sheet-choice-btn" onclick="chooseSegment()">
+            <span class="scb-icon">✂️</span>
+            <div class="scb-label">Select Segment</div>
+            <div class="scb-sub">Trim to a stretch</div>
+          </div>
         </div>
-        <div class="sheet-choice-btn" onclick="chooseSegment()">
-          <span class="scb-icon">✂️</span>
-          <div class="scb-label">Select Segment</div>
-          <div class="scb-sub">Trim to a stretch</div>
+        <button class="btn btn-ghost" style="width:100%;justify-content:center;margin-bottom:6px" onclick="cancelClassify()">Cancel</button>
+      </div>
+
+      <!-- Sheet: Step 2 — segment picking (compact, map stays visible above) -->
+      <div id="sheet-segpick" style="display:none">
+        <div class="sheet-title">✂ Select Segment</div>
+        <div class="sheet-segpick-status">
+          <div class="sheet-step" id="sheet-segpick-step">Step 1 of 2</div>
+          <div class="sheet-step-msg" id="sheet-segpick-msg">Tap your <b>START</b> point on the <span style="color:#ffcc44">highlighted road</span></div>
+        </div>
+        <div id="sheet-segpick-coords" style="display:none;font-family:'Courier Prime',monospace;font-size:0.72rem;color:var(--text-muted);line-height:1.9;margin-bottom:4px;">
+          <div id="sheet-start-info"></div>
+          <div id="sheet-end-info"></div>
+        </div>
+        <div class="sheet-actions" style="margin-bottom:8px;">
+          <button class="btn btn-ghost btn-sm" id="sheet-segpick-undo" style="display:none" onclick="segPickUndo()">↩ Undo</button>
+          <div style="flex:1"></div>
+          <button class="btn btn-ghost btn-sm" onclick="cancelClassify()">Cancel</button>
         </div>
       </div>
-      <button class="btn btn-ghost" style="width:100%;justify-content:center" onclick="cancelClassify()">Cancel</button>
     </div>
 
-    <!-- Sheet: Step 2 — segment picking -->
-    <div id="sheet-segpick" style="display:none">
-      <div class="sheet-title">✂ Segment Selection</div>
-      <div class="sheet-segpick-status">
-        <div class="sheet-step" id="sheet-segpick-step">Step 1 of 2</div>
-        <div class="sheet-step-msg" id="sheet-segpick-msg">Tap your <b>START</b> point on the <span style="color:#ffcc44">highlighted road</span></div>
-      </div>
-      <div id="sheet-segpick-coords" style="display:none;font-family:'Courier Prime',monospace;font-size:0.72rem;color:var(--text-muted);line-height:1.9;margin-bottom:4px;">
-        <div id="sheet-start-info"></div>
-        <div id="sheet-end-info"></div>
-      </div>
-      <div class="sheet-actions">
-        <button class="btn btn-ghost btn-sm" id="sheet-segpick-undo" style="display:none" onclick="segPickUndo()">↩ Undo</button>
-        <div style="flex:1"></div>
-        <button class="btn btn-ghost btn-sm" onclick="cancelClassify()">Cancel</button>
+    <!-- Scrollable form body -->
+    <div id="map-sheet-scroll">
+      <!-- Sheet: Step 3 — classify form -->
+      <div id="sheet-form" style="display:none">
+        <div class="sheet-title" id="sheet-form-title">Classify Road</div>
+        <div id="sheet-segment-badge" style="display:none;background:#0a1e30;border:1px solid #2a5a80;border-radius:4px;padding:5px 8px;margin-bottom:8px;font-size:0.72rem;color:#80c8f0;font-family:'Courier Prime',monospace;"></div>
+        <div class="field">
+          <label class="field-label">Road Name</label>
+          <input type="text" class="field-input" id="sh-cl-name" placeholder="e.g. US 169 North Segment">
+        </div>
+        <div class="field">
+          <label class="field-label" style="margin-bottom:6px">Who Can Use This Road</label>
+          <div class="check-grid">
+            <label class="check-item"><input type="checkbox" id="sh-cl-tn" checked> 🚜 Tractor (solo)</label>
+            <label class="check-item"><input type="checkbox" id="sh-cl-ts" checked> 🚜 + Sprayer/Planter</label>
+            <label class="check-item"><input type="checkbox" id="sh-cl-tl"> 🚜 + Grain Cart</label>
+            <label class="check-item"><input type="checkbox" id="sh-cl-tw"> 🚜 + Wide Tillage</label>
+            <label class="check-item"><input type="checkbox" id="sh-cl-se" checked> 🚛 Semi (empty)</label>
+            <label class="check-item"><input type="checkbox" id="sh-cl-sf" checked> 🚛 Semi (full)</label>
+          </div>
+        </div>
+        <div class="field">
+          <label class="check-item" style="display:inline-flex;cursor:pointer">
+            <input type="checkbox" id="sh-cl-ow"> &nbsp;One-way only
+          </label>
+        </div>
+        <div class="field">
+          <label class="field-label">Notes / Restrictions</label>
+          <textarea class="field-textarea" id="sh-cl-notes" placeholder="e.g. Low bridge, weight limit, narrow road" style="min-height:60px"></textarea>
+        </div>
       </div>
     </div>
 
-    <!-- Sheet: Step 3 — classify form -->
-    <div id="sheet-form" style="display:none">
-      <div class="sheet-title" id="sheet-form-title">Classify Road</div>
-      <div id="sheet-segment-badge" style="display:none;background:#0a1e30;border:1px solid #2a5a80;border-radius:4px;padding:5px 8px;margin-bottom:8px;font-size:0.72rem;color:#80c8f0;font-family:'Courier Prime',monospace;"></div>
-      <div class="field">
-        <label class="field-label">Road Name</label>
-        <input type="text" class="field-input" id="sh-cl-name" placeholder="e.g. US 169 North Segment">
-      </div>
-      <div class="field">
-        <label class="field-label" style="margin-bottom:6px">Who Can Use This Road</label>
-        <div class="check-grid">
-          <label class="check-item"><input type="checkbox" id="sh-cl-tn" checked> 🚜 Tractor (solo)</label>
-          <label class="check-item"><input type="checkbox" id="sh-cl-ts" checked> 🚜 + Sprayer/Planter</label>
-          <label class="check-item"><input type="checkbox" id="sh-cl-tl"> 🚜 + Grain Cart</label>
-          <label class="check-item"><input type="checkbox" id="sh-cl-tw"> 🚜 + Wide Tillage</label>
-          <label class="check-item"><input type="checkbox" id="sh-cl-se" checked> 🚛 Semi (empty)</label>
-          <label class="check-item"><input type="checkbox" id="sh-cl-sf" checked> 🚛 Semi (full)</label>
-        </div>
-      </div>
-      <div class="field">
-        <label class="check-item" style="display:inline-flex;cursor:pointer">
-          <input type="checkbox" id="sh-cl-ow"> &nbsp;One-way only
-        </label>
-      </div>
-      <div class="field">
-        <label class="field-label">Notes / Restrictions</label>
-        <textarea class="field-textarea" id="sh-cl-notes" placeholder="e.g. Low bridge, weight limit, narrow road"></textarea>
-      </div>
+    <!-- Sticky footer with action buttons — always visible -->
+    <div id="map-sheet-footer" style="display:none">
       <div class="sheet-actions">
         <button class="btn btn-danger btn-sm" id="sh-cl-remove" style="display:none" onclick="removeApprovedRoad()">🗑 Remove</button>
         <div style="flex:1"></div>
-        <button class="btn btn-ghost btn-sm" onclick="cancelClassify()">Cancel</button>
-        <button class="btn btn-gold btn-sm" onclick="saveClassify()">✓ Approve</button>
+        <button class="btn btn-ghost" onclick="cancelClassify()">Cancel</button>
+        <button class="btn btn-gold" onclick="saveClassify()" style="padding:10px 20px;font-size:0.9rem;">✓ Approve Road</button>
       </div>
     </div>
 
@@ -1045,6 +1072,10 @@ function shShow(panel) {
   ['sheet-choice','sheet-segpick','sheet-form'].forEach(id =>
     document.getElementById(id).style.display = (id === panel) ? 'block' : 'none'
   );
+  // Show sticky footer only when form is active
+  document.getElementById('map-sheet-footer').style.display = (panel === 'sheet-form') ? 'block' : 'none';
+  // Show scroll area only for form
+  document.getElementById('map-sheet-scroll').style.display = (panel === 'sheet-form') ? 'block' : 'none';
 }
 
 function openMapSheet() {
@@ -1054,6 +1085,8 @@ function openMapSheet() {
 
 function closeMapSheet() {
   document.getElementById('map-sheet').classList.remove('open');
+  document.getElementById('map-sheet-footer').style.display = 'none';
+  document.getElementById('map-sheet-scroll').style.display = 'none';
 }
 
 // Read form values from whichever UI is active (desktop cl- or mobile sh-cl-)
@@ -1170,8 +1203,6 @@ function chooseSegment() {
 
   if (isMobile()) {
     shShow('sheet-segpick');
-    // Make sheet smaller so map is visible above it
-    document.getElementById('map-sheet').style.maxHeight = '40vh';
   } else {
     clShow('cl-segpick');
   }
@@ -1213,7 +1244,6 @@ function onSegPickClick(latlng) {
       document.getElementById('sheet-form-title').textContent = '✂ Classify Segment';
       document.getElementById('sheet-segment-badge').textContent = badge;
       document.getElementById('sheet-segment-badge').style.display = 'block';
-      document.getElementById('map-sheet').style.maxHeight = '75vh';
       shShow('sheet-form');
     } else {
       document.getElementById('classify-title').textContent = '✂ Classify Segment';
@@ -1329,7 +1359,6 @@ function saveClassify() {
 function cancelClassify() {
   document.getElementById('classify-panel').classList.remove('open');
   closeMapSheet();
-  document.getElementById('map-sheet').style.maxHeight = '75vh';
   S.pendingRoad = null;
   S.editingRoadId = null;
   clearSegPick();
