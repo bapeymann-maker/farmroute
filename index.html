@@ -27,6 +27,8 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
 /* SIDEBAR COLLAPSE */
 #sidebar{width:360px;min-width:360px;background:var(--soil-mid);border-right:2px solid var(--border);display:flex;flex-direction:column;overflow:hidden;transition:width 0.25s ease,min-width 0.25s ease;}
 #sidebar.collapsed{width:48px;min-width:48px;}
+#map-wrap{position:relative;flex:1;overflow:hidden;}
+#map{width:100%;height:100%;}
 #sidebar.collapsed .sidebar-header-content,
 #sidebar.collapsed .sidebar-scroll,
 #sidebar.collapsed .legend-bar{display:none;}
