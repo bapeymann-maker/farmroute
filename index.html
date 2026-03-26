@@ -810,16 +810,15 @@ const WP_ICONS = { field:'🌱', hq:'🏠', shop:'🔧', elevator:'🏗️', bin
 // MAP INTERACTIONS
 // ================================================================
 function onMapClick(e) {
-  if (S.tool === 'location') {
+  if (S.segPickState === 'pickStart' || S.segPickState === 'pickEnd') {
+    onSegPickClick(e.latlng);
+  } else if (S.tool === 'location') {
     addWaypoint(e.latlng);
   } else if (S.tool === 'drawRoad') {
     S.drawPoints.push([e.latlng.lat, e.latlng.lng]);
     renderDrawLayer();
   } else if (S.tool === 'selectRoad') {
-    // Click-to-query: fetch roads near this tap point on demand
     queryRoadsNearPoint(e.latlng);
-  } else if (S.segPickState === 'pickStart' || S.segPickState === 'pickEnd') {
-    onSegPickClick(e.latlng);
   }
 }
 
