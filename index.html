@@ -259,6 +259,51 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
 #sync-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green-bright);margin-left:6px;flex-shrink:0;}
 #sync-dot.syncing{background:var(--gold);animation:pulse 0.8s infinite;}
 #sync-dot.error{background:var(--danger);}
+
+/* MAP BOTTOM SHEET — floats over map for classify steps */
+#map-sheet{
+  display:none;
+  position:absolute;
+  left:0;right:0;bottom:0;
+  z-index:2000;
+  background:var(--soil-mid);
+  border-top:2px solid var(--gold);
+  border-radius:16px 16px 0 0;
+  padding:16px 16px 20px;
+  box-shadow:0 -6px 30px rgba(0,0,0,0.6);
+  max-height:75vh;
+  overflow-y:auto;
+  transform:translateY(100%);
+  transition:transform 0.3s ease;
+}
+#map-sheet.open{
+  display:block;
+  transform:translateY(0);
+}
+.sheet-handle{width:40px;height:4px;background:var(--border-bright);border-radius:2px;margin:0 auto 14px;cursor:pointer;}
+.sheet-title{font-family:'Barlow Condensed',sans-serif;font-size:1rem;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--gold-light);margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border);}
+.sheet-desc{font-size:0.82rem;color:var(--text-dim);margin-bottom:14px;line-height:1.5;}
+.sheet-choice-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;}
+.sheet-choice-btn{padding:14px 10px;border:2px solid var(--border);border-radius:8px;background:var(--card-bg);cursor:pointer;text-align:center;transition:all 0.15s;}
+.sheet-choice-btn:hover{border-color:var(--gold);}
+.sheet-choice-btn .scb-icon{font-size:1.6rem;display:block;margin-bottom:6px;}
+.sheet-choice-btn .scb-label{font-family:'Barlow Condensed',sans-serif;font-size:0.88rem;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;color:var(--gold-light);}
+.sheet-choice-btn .scb-sub{font-size:0.7rem;color:var(--text-muted);margin-top:2px;}
+.sheet-segpick-status{background:var(--soil);border:2px solid var(--gold);border-radius:8px;padding:12px;margin-bottom:12px;}
+.sheet-step{font-family:'Barlow Condensed',sans-serif;font-size:1rem;font-weight:800;color:var(--gold-light);margin-bottom:4px;}
+.sheet-step-msg{font-size:0.84rem;color:var(--text);line-height:1.5;}
+.sheet-actions{display:flex;gap:8px;margin-top:12px;}
+
+/* On desktop: classify panel stays in sidebar, sheet is hidden */
+@media (min-width:701px) {
+  #map-sheet{display:none !important;}
+  #classify-panel{display:none;}
+  #classify-panel.open{display:block;}
+}
+/* On mobile: classify panel in sidebar is hidden, sheet is used instead */
+@media (max-width:700px) {
+  #classify-panel{display:none !important;}
+}
 </style>
 </head>
 <body>
@@ -499,7 +544,8 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
   <div id="map"></div>
   <div class="map-hint" id="map-hint">Click map to place location</div>
   <div class="draw-hint" id="draw-hint">Click map to add road points — double-click or press Enter to finish</div>
-  <!-- Mobile menu button (visible when sidebar is collapsed on mobile) -->
+
+  <!-- Mobile menu button -->
   <button id="mobile-menu-btn" onclick="toggleSidebar()" style="
     display:none;position:absolute;top:12px;left:12px;z-index:1400;
     background:var(--soil-mid);border:2px solid var(--border-bright);
@@ -507,6 +553,85 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
     font-family:'Barlow Condensed',sans-serif;font-size:0.85rem;font-weight:800;
     text-transform:uppercase;letter-spacing:1px;color:var(--gold-light);cursor:pointer;
     box-shadow:0 3px 12px rgba(0,0,0,0.5);">☰ Menu</button>
+
+  <!-- MAP BOTTOM SHEET (mobile classify flow) -->
+  <div id="map-sheet">
+    <div class="sheet-handle" onclick="closeMapSheet()"></div>
+
+    <!-- Sheet: Step 1 — choice -->
+    <div id="sheet-choice">
+      <div class="sheet-title" id="sheet-road-name">🛣 Road Selected</div>
+      <div class="sheet-desc" id="sheet-road-desc">Choose how to approve this road:</div>
+      <div class="sheet-choice-btns">
+        <div class="sheet-choice-btn" onclick="chooseWholeRoad()">
+          <span class="scb-icon">✅</span>
+          <div class="scb-label">Whole Road</div>
+          <div class="scb-sub">Approve entire length</div>
+        </div>
+        <div class="sheet-choice-btn" onclick="chooseSegment()">
+          <span class="scb-icon">✂️</span>
+          <div class="scb-label">Select Segment</div>
+          <div class="scb-sub">Trim to a stretch</div>
+        </div>
+      </div>
+      <button class="btn btn-ghost" style="width:100%;justify-content:center" onclick="cancelClassify()">Cancel</button>
+    </div>
+
+    <!-- Sheet: Step 2 — segment picking -->
+    <div id="sheet-segpick" style="display:none">
+      <div class="sheet-title">✂ Segment Selection</div>
+      <div class="sheet-segpick-status">
+        <div class="sheet-step" id="sheet-segpick-step">Step 1 of 2</div>
+        <div class="sheet-step-msg" id="sheet-segpick-msg">Tap your <b>START</b> point on the <span style="color:#ffcc44">highlighted road</span></div>
+      </div>
+      <div id="sheet-segpick-coords" style="display:none;font-family:'Courier Prime',monospace;font-size:0.72rem;color:var(--text-muted);line-height:1.9;margin-bottom:4px;">
+        <div id="sheet-start-info"></div>
+        <div id="sheet-end-info"></div>
+      </div>
+      <div class="sheet-actions">
+        <button class="btn btn-ghost btn-sm" id="sheet-segpick-undo" style="display:none" onclick="segPickUndo()">↩ Undo</button>
+        <div style="flex:1"></div>
+        <button class="btn btn-ghost btn-sm" onclick="cancelClassify()">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Sheet: Step 3 — classify form -->
+    <div id="sheet-form" style="display:none">
+      <div class="sheet-title" id="sheet-form-title">Classify Road</div>
+      <div id="sheet-segment-badge" style="display:none;background:#0a1e30;border:1px solid #2a5a80;border-radius:4px;padding:5px 8px;margin-bottom:8px;font-size:0.72rem;color:#80c8f0;font-family:'Courier Prime',monospace;"></div>
+      <div class="field">
+        <label class="field-label">Road Name</label>
+        <input type="text" class="field-input" id="sh-cl-name" placeholder="e.g. US 169 North Segment">
+      </div>
+      <div class="field">
+        <label class="field-label" style="margin-bottom:6px">Who Can Use This Road</label>
+        <div class="check-grid">
+          <label class="check-item"><input type="checkbox" id="sh-cl-tn" checked> 🚜 Tractor (solo)</label>
+          <label class="check-item"><input type="checkbox" id="sh-cl-ts" checked> 🚜 + Sprayer/Planter</label>
+          <label class="check-item"><input type="checkbox" id="sh-cl-tl"> 🚜 + Grain Cart</label>
+          <label class="check-item"><input type="checkbox" id="sh-cl-tw"> 🚜 + Wide Tillage</label>
+          <label class="check-item"><input type="checkbox" id="sh-cl-se" checked> 🚛 Semi (empty)</label>
+          <label class="check-item"><input type="checkbox" id="sh-cl-sf" checked> 🚛 Semi (full)</label>
+        </div>
+      </div>
+      <div class="field">
+        <label class="check-item" style="display:inline-flex;cursor:pointer">
+          <input type="checkbox" id="sh-cl-ow"> &nbsp;One-way only
+        </label>
+      </div>
+      <div class="field">
+        <label class="field-label">Notes / Restrictions</label>
+        <textarea class="field-textarea" id="sh-cl-notes" placeholder="e.g. Low bridge, weight limit, narrow road"></textarea>
+      </div>
+      <div class="sheet-actions">
+        <button class="btn btn-danger btn-sm" id="sh-cl-remove" style="display:none" onclick="removeApprovedRoad()">🗑 Remove</button>
+        <div style="flex:1"></div>
+        <button class="btn btn-ghost btn-sm" onclick="cancelClassify()">Cancel</button>
+        <button class="btn btn-gold btn-sm" onclick="saveClassify()">✓ Approve</button>
+      </div>
+    </div>
+
+  </div><!-- /map-sheet -->
 </div>
 
 </div><!-- /layout -->
@@ -715,6 +840,8 @@ function setTool(tool) {
     document.getElementById('tool-road').classList.add('active-blue');
     map.getContainer().style.cursor = 'pointer';
     showHint('🖱 Click any gray road on the map to approve it');
+    // On mobile: collapse sidebar so map is fully visible
+    if (isMobile() && !sidebarCollapsed) toggleSidebar();
     // Only auto-load if no roads currently shown
     if (S.osmRoadLayers.getLayers().length === 0) loadOsmRoads();
   } else if (tool === 'drawRoad') {
@@ -900,29 +1027,93 @@ function segPickDistMi(snapA, snapB, geometry) {
 }
 
 // ================================================================
-// CLASSIFY PANEL — helpers for showing/hiding sub-panels
+// CLASSIFY — helpers
 // ================================================================
 function clShow(panel) {
+  // Desktop sidebar panels
   ['cl-choice','cl-segpick','cl-form'].forEach(id =>
+    document.getElementById(id).style.display = (id === panel) ? 'block' : 'none'
+  );
+  // Mobile sheet panels
+  ['sheet-choice','sheet-segpick','sheet-form'].forEach(id => {
+    const shId = id === 'cl-choice' ? 'sheet-choice' : id === 'cl-segpick' ? 'sheet-segpick' : id === 'cl-form' ? 'sheet-form' : null;
+    if (shId) document.getElementById(shId).style.display = 'none';
+  });
+}
+
+function shShow(panel) {
+  ['sheet-choice','sheet-segpick','sheet-form'].forEach(id =>
     document.getElementById(id).style.display = (id === panel) ? 'block' : 'none'
   );
 }
 
+function openMapSheet() {
+  const sheet = document.getElementById('map-sheet');
+  sheet.classList.add('open');
+}
+
+function closeMapSheet() {
+  document.getElementById('map-sheet').classList.remove('open');
+}
+
+// Read form values from whichever UI is active (desktop cl- or mobile sh-cl-)
+function getFormValues() {
+  const prefix = isMobile() ? 'sh-cl-' : 'cl-';
+  return {
+    name:   document.getElementById(prefix+'name').value.trim(),
+    ow:     document.getElementById(prefix+'ow').checked,
+    notes:  document.getElementById(prefix+'notes').value.trim(),
+    perms: {
+      tractorNone:  document.getElementById(prefix+'tn').checked,
+      tractorSmall: document.getElementById(prefix+'ts').checked,
+      tractorLarge: document.getElementById(prefix+'tl').checked,
+      tractorWide:  document.getElementById(prefix+'tw').checked,
+      semiEmpty:    document.getElementById(prefix+'se').checked,
+      semiFull:     document.getElementById(prefix+'sf').checked
+    }
+  };
+}
+
+function setFormValues(prefix, name, road) {
+  document.getElementById(prefix+'name').value  = name || '';
+  document.getElementById(prefix+'ow').checked  = road ? !!road.oneWay : false;
+  document.getElementById(prefix+'notes').value = road ? road.notes || '' : '';
+  document.getElementById(prefix+'tn').checked  = road ? !!road.permissions.tractorNone  : true;
+  document.getElementById(prefix+'ts').checked  = road ? !!road.permissions.tractorSmall : true;
+  document.getElementById(prefix+'tl').checked  = road ? !!road.permissions.tractorLarge : false;
+  document.getElementById(prefix+'tw').checked  = road ? !!road.permissions.tractorWide  : false;
+  document.getElementById(prefix+'se').checked  = road ? !!road.permissions.semiEmpty    : true;
+  document.getElementById(prefix+'sf').checked  = road ? !!road.permissions.semiFull     : true;
+}
+
+function populateClassifyForm(name, road) {
+  setFormValues('cl-', name, road);   // desktop
+  setFormValues('sh-cl-', name, road); // mobile
+  document.getElementById('cl-remove').style.display = 'none';
+  document.getElementById('sh-cl-remove').style.display = 'none';
+}
+
 // ================================================================
-// CLASSIFY PANEL — entry points
+// CLASSIFY — entry points
 // ================================================================
 function openClassifyForOsmRoad(road) {
   S.pendingRoad = { geometry: road.geometry, osmId: road.osmId, suggestedName: road.name };
   S.editingRoadId = null;
   clearSegPick();
-
-  document.getElementById('cl-choice-title').textContent = '🛣 ' + road.name;
-  document.getElementById('cl-choice-desc').textContent =
-    `Approve this entire road, or click "Select Segment" to trim it to a specific stretch.`;
-  clShow('cl-choice');
-  document.getElementById('classify-panel').classList.add('open');
-  document.getElementById('classify-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   highlightPendingRoad(road.geometry);
+
+  if (isMobile()) {
+    document.getElementById('sheet-road-name').textContent = '🛣 ' + road.name;
+    document.getElementById('sheet-road-desc').textContent = 'Approve the whole road, or trim it to a specific stretch.';
+    shShow('sheet-choice');
+    openMapSheet();
+  } else {
+    document.getElementById('cl-choice-title').textContent = '🛣 ' + road.name;
+    document.getElementById('cl-choice-desc').textContent = 'Approve this entire road, or click "Select Segment" to trim it.';
+    clShow('cl-choice');
+    document.getElementById('classify-panel').classList.add('open');
+    document.getElementById('classify-panel').scrollIntoView({ behavior:'smooth', block:'nearest' });
+  }
 }
 
 function openClassifyForEdit(id) {
@@ -932,26 +1123,22 @@ function openClassifyForEdit(id) {
   S.pendingRoad = null;
   clearSegPick();
   populateClassifyForm(road.name, road);
-  document.getElementById('cl-remove').style.display = 'inline-flex';
-  document.getElementById('classify-title').textContent = '✏️ Edit: ' + road.name;
-  document.getElementById('cl-segment-badge').style.display = 'none';
-  clShow('cl-form');
-  document.getElementById('classify-panel').classList.add('open');
-  document.getElementById('classify-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  if (S.approvedLayers[id]) S.approvedLayers[id].setStyle({ weight: 8, opacity: 1 });
-}
 
-function populateClassifyForm(name, road) {
-  document.getElementById('cl-name').value = name || '';
-  document.getElementById('cl-ow').checked   = road ? !!road.oneWay : false;
-  document.getElementById('cl-notes').value  = road ? road.notes || '' : '';
-  document.getElementById('cl-tn').checked   = road ? !!road.permissions.tractorNone  : true;
-  document.getElementById('cl-ts').checked   = road ? !!road.permissions.tractorSmall : true;
-  document.getElementById('cl-tl').checked   = road ? !!road.permissions.tractorLarge : false;
-  document.getElementById('cl-tw').checked   = road ? !!road.permissions.tractorWide  : false;
-  document.getElementById('cl-se').checked   = road ? !!road.permissions.semiEmpty    : true;
-  document.getElementById('cl-sf').checked   = road ? !!road.permissions.semiFull     : true;
-  document.getElementById('cl-remove').style.display = 'none';
+  if (isMobile()) {
+    document.getElementById('sheet-form-title').textContent = '✏️ Edit: ' + road.name;
+    document.getElementById('sheet-segment-badge').style.display = 'none';
+    document.getElementById('sh-cl-remove').style.display = 'inline-flex';
+    shShow('sheet-form');
+    openMapSheet();
+  } else {
+    document.getElementById('cl-remove').style.display = 'inline-flex';
+    document.getElementById('classify-title').textContent = '✏️ Edit: ' + road.name;
+    document.getElementById('cl-segment-badge').style.display = 'none';
+    clShow('cl-form');
+    document.getElementById('classify-panel').classList.add('open');
+    document.getElementById('classify-panel').scrollIntoView({ behavior:'smooth', block:'nearest' });
+  }
+  if (S.approvedLayers[id]) S.approvedLayers[id].setStyle({ weight: 8, opacity: 1 });
 }
 
 // ================================================================
@@ -960,9 +1147,16 @@ function populateClassifyForm(name, road) {
 function chooseWholeRoad() {
   const name = S.pendingRoad?.suggestedName || 'Road';
   populateClassifyForm(name, null);
-  document.getElementById('classify-title').textContent = '🛣 Classify: ' + name;
-  document.getElementById('cl-segment-badge').style.display = 'none';
-  clShow('cl-form');
+
+  if (isMobile()) {
+    document.getElementById('sheet-form-title').textContent = '🛣 Classify: ' + name;
+    document.getElementById('sheet-segment-badge').style.display = 'none';
+    shShow('sheet-form');
+  } else {
+    document.getElementById('classify-title').textContent = '🛣 Classify: ' + name;
+    document.getElementById('cl-segment-badge').style.display = 'none';
+    clShow('cl-form');
+  }
 }
 
 function chooseSegment() {
@@ -974,16 +1168,20 @@ function chooseSegment() {
   if (!S.segPickLayer) S.segPickLayer = L.layerGroup().addTo(map);
   S.segPickLayer.clearLayers();
 
-  clShow('cl-segpick');
-  document.getElementById('cl-segpick-markers').style.display = 'none';
-  document.getElementById('cl-segpick-undo').style.display = 'none';
+  if (isMobile()) {
+    shShow('sheet-segpick');
+    // Make sheet smaller so map is visible above it
+    document.getElementById('map-sheet').style.maxHeight = '40vh';
+  } else {
+    clShow('cl-segpick');
+  }
   updateSegPickUI();
-  showHint('✂ Click your START point on the highlighted road');
+  showHint('✂ Tap START point on the highlighted road');
   map.getContainer().style.cursor = 'crosshair';
 }
 
 // ================================================================
-// SEGMENT PICKING — click handling
+// SEGMENT PICKING
 // ================================================================
 function onSegPickClick(latlng) {
   if (!S.segPickRoad) return;
@@ -994,7 +1192,7 @@ function onSegPickClick(latlng) {
     S.segPickState = 'pickEnd';
     renderSegPickMarkers();
     updateSegPickUI();
-    showHint('✂ Now click your END point on the highlighted road');
+    showHint('✂ Now tap your END point on the highlighted road');
   } else if (S.segPickState === 'pickEnd') {
     S.segPickEnd = snap;
     S.segPickState = null;
@@ -1002,25 +1200,27 @@ function onSegPickClick(latlng) {
     const subGeo = extractSubGeometry(S.segPickRoad.geometry, S.segPickStart, S.segPickEnd);
     const distMi = segPickDistMi(S.segPickStart, S.segPickEnd, S.segPickRoad.geometry);
 
-    // Replace pending road geometry with the trimmed segment
-    S.pendingRoad = {
-      geometry: subGeo,
-      osmId: S.segPickRoad.osmId,
-      suggestedName: S.segPickRoad.suggestedName
-    };
+    S.pendingRoad = { geometry: subGeo, osmId: S.segPickRoad.osmId, suggestedName: S.segPickRoad.suggestedName };
 
-    // Update highlight to show trimmed segment only
     if (highlightLayer) { map.removeLayer(highlightLayer); highlightLayer = null; }
     highlightLayer = L.polyline(subGeo, { color: '#ffcc44', weight: 7, opacity: 0.95 }).addTo(map);
 
-    // Show the form
     const name = S.segPickRoad.suggestedName + ' (Segment)';
+    const badge = `✂ Trimmed · ${distMi} mi · ${subGeo.length} pts`;
     populateClassifyForm(name, null);
-    document.getElementById('classify-title').textContent = '✂ Classify Segment';
-    document.getElementById('cl-segment-badge').textContent = `✂ Trimmed segment · ${distMi} mi · ${subGeo.length} points`;
-    document.getElementById('cl-segment-badge').style.display = 'block';
-    clShow('cl-form');
 
+    if (isMobile()) {
+      document.getElementById('sheet-form-title').textContent = '✂ Classify Segment';
+      document.getElementById('sheet-segment-badge').textContent = badge;
+      document.getElementById('sheet-segment-badge').style.display = 'block';
+      document.getElementById('map-sheet').style.maxHeight = '75vh';
+      shShow('sheet-form');
+    } else {
+      document.getElementById('classify-title').textContent = '✂ Classify Segment';
+      document.getElementById('cl-segment-badge').textContent = badge;
+      document.getElementById('cl-segment-badge').style.display = 'block';
+      clShow('cl-form');
+    }
     hideHint();
     map.getContainer().style.cursor = 'pointer';
     renderSegPickMarkers();
@@ -1029,42 +1229,43 @@ function onSegPickClick(latlng) {
 
 function updateSegPickUI() {
   const hasStart = !!S.segPickStart;
-  document.getElementById('cl-segpick-step').textContent = hasStart ? 'Step 2 of 2' : 'Step 1 of 2';
-  document.getElementById('cl-segpick-msg').innerHTML = hasStart
-    ? `Start set ✓ — now click your <b>END point</b> on the highlighted road`
-    : `Click anywhere on the <span style="color:#ffcc44">highlighted road</span> to set your <b>START</b> point`;
-  document.getElementById('cl-segpick-undo').style.display = hasStart ? 'inline-flex' : 'none';
+  const stepTxt = hasStart ? 'Step 2 of 2' : 'Step 1 of 2';
+  const msgHtml = hasStart
+    ? `Start set ✓ — tap your <b>END point</b> on the highlighted road`
+    : `Tap the <span style="color:#ffcc44">highlighted road</span> to set your <b>START</b> point`;
 
+  // Desktop
+  document.getElementById('cl-segpick-step').textContent = stepTxt;
+  document.getElementById('cl-segpick-msg').innerHTML = msgHtml;
+  document.getElementById('cl-segpick-undo').style.display = hasStart ? 'inline-flex' : 'none';
   if (hasStart) {
     document.getElementById('cl-segpick-markers').style.display = 'block';
-    document.getElementById('cl-segpick-start-info').textContent =
-      `🟢 Start: ${S.segPickStart.pt[0].toFixed(5)}, ${S.segPickStart.pt[1].toFixed(5)}`;
-    document.getElementById('cl-segpick-end-info').textContent = S.segPickEnd
-      ? `🔴 End:   ${S.segPickEnd.pt[0].toFixed(5)}, ${S.segPickEnd.pt[1].toFixed(5)}`
-      : '🔴 End:   (not set yet)';
+    document.getElementById('cl-segpick-start-info').textContent = `🟢 ${S.segPickStart.pt[0].toFixed(5)}, ${S.segPickStart.pt[1].toFixed(5)}`;
+    document.getElementById('cl-segpick-end-info').textContent = S.segPickEnd ? `🔴 ${S.segPickEnd.pt[0].toFixed(5)}, ${S.segPickEnd.pt[1].toFixed(5)}` : '🔴 (not set yet)';
+  }
+  // Mobile sheet
+  document.getElementById('sheet-segpick-step').textContent = stepTxt;
+  document.getElementById('sheet-segpick-msg').innerHTML = msgHtml;
+  document.getElementById('sheet-segpick-undo').style.display = hasStart ? 'inline-flex' : 'none';
+  if (hasStart) {
+    document.getElementById('sheet-segpick-coords').style.display = 'block';
+    document.getElementById('sheet-start-info').textContent = `🟢 ${S.segPickStart.pt[0].toFixed(5)}, ${S.segPickStart.pt[1].toFixed(5)}`;
+    document.getElementById('sheet-end-info').textContent = S.segPickEnd ? `🔴 ${S.segPickEnd.pt[0].toFixed(5)}, ${S.segPickEnd.pt[1].toFixed(5)}` : '🔴 (not set yet)';
   }
 }
 
 function renderSegPickMarkers() {
   if (!S.segPickLayer) return;
   S.segPickLayer.clearLayers();
-
   if (S.segPickStart) {
-    // Green start marker
-    L.circleMarker(S.segPickStart.pt, {
-      radius: 9, color: '#fff', weight: 3, fillColor: '#3dcc3d', fillOpacity: 1
-    }).bindTooltip('START', { permanent: false }).addTo(S.segPickLayer);
+    L.circleMarker(S.segPickStart.pt, { radius:9, color:'#fff', weight:3, fillColor:'#3dcc3d', fillOpacity:1 }).bindTooltip('START').addTo(S.segPickLayer);
   }
   if (S.segPickEnd) {
-    // Red end marker
-    L.circleMarker(S.segPickEnd.pt, {
-      radius: 9, color: '#fff', weight: 3, fillColor: '#e84040', fillOpacity: 1
-    }).bindTooltip('END', { permanent: false }).addTo(S.segPickLayer);
+    L.circleMarker(S.segPickEnd.pt, { radius:9, color:'#fff', weight:3, fillColor:'#e84040', fillOpacity:1 }).bindTooltip('END').addTo(S.segPickLayer);
   }
   if (S.segPickStart && S.segPickEnd) {
-    // Preview the selected sub-segment in bright cyan
     const sub = extractSubGeometry(S.segPickRoad.geometry, S.segPickStart, S.segPickEnd);
-    L.polyline(sub, { color: '#00ffcc', weight: 6, opacity: 0.85 }).addTo(S.segPickLayer);
+    L.polyline(sub, { color:'#00ffcc', weight:6, opacity:0.85 }).addTo(S.segPickLayer);
   }
 }
 
@@ -1074,7 +1275,7 @@ function segPickUndo() {
   S.segPickState = 'pickStart';
   if (S.segPickLayer) S.segPickLayer.clearLayers();
   updateSegPickUI();
-  showHint('✂ Click your START point on the highlighted road');
+  showHint('✂ Tap START point on the highlighted road');
 }
 
 function clearSegPick() {
@@ -1091,43 +1292,29 @@ function clearSegPick() {
 let highlightLayer = null;
 function highlightPendingRoad(geometry) {
   if (highlightLayer) map.removeLayer(highlightLayer);
-  highlightLayer = L.polyline(geometry, { color: '#ffcc44', weight: 7, opacity: 0.9 }).addTo(map);
-  map.fitBounds(highlightLayer.getBounds(), { padding: [60, 60], maxZoom: 16 });
+  highlightLayer = L.polyline(geometry, { color:'#ffcc44', weight:7, opacity:0.9 }).addTo(map);
+  map.fitBounds(highlightLayer.getBounds(), { padding:[60,60], maxZoom:16 });
 }
 
 // ================================================================
 // SAVE / CANCEL
 // ================================================================
 function saveClassify() {
-  const name = document.getElementById('cl-name').value.trim();
-  if (!name) { alert('Please enter a road name.'); return; }
-
-  const perms = {
-    tractorNone:  document.getElementById('cl-tn').checked,
-    tractorSmall: document.getElementById('cl-ts').checked,
-    tractorLarge: document.getElementById('cl-tl').checked,
-    tractorWide:  document.getElementById('cl-tw').checked,
-    semiEmpty:    document.getElementById('cl-se').checked,
-    semiFull:     document.getElementById('cl-sf').checked
-  };
+  const f = getFormValues();
+  if (!f.name) { alert('Please enter a road name.'); return; }
 
   if (S.editingRoadId) {
     const road = S.approvedRoads.find(r => r.id === S.editingRoadId);
-    if (road) {
-      road.name = name;
-      road.permissions = perms;
-      road.oneWay = document.getElementById('cl-ow').checked;
-      road.notes = document.getElementById('cl-notes').value.trim();
-    }
+    if (road) { road.name = f.name; road.permissions = f.perms; road.oneWay = f.ow; road.notes = f.notes; }
   } else if (S.pendingRoad) {
     S.approvedRoads.push({
       id: 'road_' + Date.now(),
       osmId: S.pendingRoad.osmId || null,
-      name,
+      name: f.name,
       geometry: S.pendingRoad.geometry,
-      permissions: perms,
-      oneWay: document.getElementById('cl-ow').checked,
-      notes: document.getElementById('cl-notes').value.trim()
+      permissions: f.perms,
+      oneWay: f.ow,
+      notes: f.notes
     });
   }
 
@@ -1141,6 +1328,8 @@ function saveClassify() {
 
 function cancelClassify() {
   document.getElementById('classify-panel').classList.remove('open');
+  closeMapSheet();
+  document.getElementById('map-sheet').style.maxHeight = '75vh';
   S.pendingRoad = null;
   S.editingRoadId = null;
   clearSegPick();
@@ -1149,7 +1338,7 @@ function cancelClassify() {
   map.getContainer().style.cursor = S.tool === 'selectRoad' ? 'pointer' : '';
   Object.entries(S.approvedLayers).forEach(([id, layer]) => {
     const road = S.approvedRoads.find(r => r.id === id);
-    if (road) layer.setStyle({ color: roadColor(road), weight: 5, opacity: 0.85 });
+    if (road) layer.setStyle({ color: roadColor(road), weight:5, opacity:0.85 });
   });
 }
 
