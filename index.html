@@ -383,6 +383,14 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
           <button class="mode-tab active" id="tab-admin" onclick="setMode('admin')">⚙ Admin Setup</button>
           <button class="mode-tab" id="tab-emp" onclick="setMode('employee')">🚜 Route Planner</button>
         </div>
+        <button onclick="toggleSidebar()" style="
+          width:100%;margin-top:8px;padding:7px;
+          background:var(--soil-lighter);border:1px solid var(--border);border-radius:5px;
+          color:var(--text-muted);font-family:'Barlow Condensed',sans-serif;
+          font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;
+          cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
+          ◀ Hide Menu
+        </button>
       </div>
     </div>
 
@@ -924,74 +932,202 @@ const OVERPASS_ENDPOINTS = [
   'https://overpass.openstreetmap.ru/api/interpreter'
 ];
 
+// Cross-browser fetch with timeout using AbortController
+function fetchWithTimeout(url, options, ms) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, { ...options, signal: ctrl.signal })
+    .finally(() => clearTimeout(timer));
+}
+
 let queryInFlight = false;
-let lastQueryPt = null;
 
 async function queryRoadsNearPoint(latlng) {
-  if (queryInFlight) return; // debounce — ignore rapid taps
+  if (queryInFlight) return;
   const { lat, lng } = latlng;
 
-  // If user tapped very close to a road already on screen, open classify directly
-  const existing = findNearestOsmLayer(lat, lng, 0.0008); // ~80m
-  if (existing) {
-    openClassifyForOsmRoad(existing);
-    return;
-  }
+  // If user tapped near a road already on screen, open classify directly
+  const existing = findNearestOsmLayer(lat, lng, 0.0012);
+  if (existing) { openClassifyForOsmRoad(existing); return; }
 
   queryInFlight = true;
-  lastQueryPt = latlng;
-  setStatus('loading', '⏳ Finding roads near tap…');
+  setStatus('loading', '⏳ Finding roads…');
 
-  // Small radius query — 400m around the tap point
-  const R = 0.004; // ~400m in degrees
-  const bbox = `${(lat-R).toFixed(5)},${(lng-R).toFixed(5)},${(lat+R).toFixed(5)},${(lng+R).toFixed(5)}`;
-  const query = `[out:json][timeout:8];way["highway"](${bbox});out body;>;out skel qt;`;
+  const R = 0.003; // ~300m radius
+  const west  = (lng - R).toFixed(5);
+  const south = (lat - R).toFixed(5);
+  const east  = (lng + R).toFixed(5);
+  const north = (lat + R).toFixed(5);
 
   let roads = null;
   let lastErr = '';
 
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    try {
-      const resp = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'data=' + encodeURIComponent(query),
-        signal: AbortSignal.timeout(9000)
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      roads = parseOverpass(data);
-      break;
-    } catch(e) {
-      lastErr = e.message || String(e);
+  // --- Attempt 1: OSM API directly (fastest, most reliable) ---
+  try {
+    setStatus('loading', '⏳ Querying OSM API…');
+    const url = `https://api.openstreetmap.org/api/0.6/map?bbox=${west},${south},${east},${north}`;
+    const resp = await fetchWithTimeout(url, {}, 10000);
+    if (!resp.ok) throw new Error(`OSM API ${resp.status}`);
+    const xml = await resp.text();
+    roads = parseOsmXml(xml);
+  } catch(e) {
+    lastErr = e.message || String(e);
+  }
+
+  // --- Attempt 2: Overpass endpoints (fallback) ---
+  if (!roads) {
+    const query = `[out:json][timeout:8];way["highway"](${south},${west},${north},${east});out body;>;out skel qt;`;
+    for (const endpoint of OVERPASS_ENDPOINTS) {
+      try {
+        setStatus('loading', `⏳ Trying ${new URL(endpoint).hostname}…`);
+        const resp = await fetchWithTimeout(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'data=' + encodeURIComponent(query)
+        }, 12000);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        roads = parseOverpass(data);
+        if (roads) break;
+      } catch(e) {
+        lastErr = e.message || String(e);
+      }
     }
   }
 
   queryInFlight = false;
 
   if (!roads) {
-    setStatus('warn', `Could not load roads (${lastErr}) — check connection or use ✏️ Draw Custom Road`);
+    setStatus('warn', `Roads unavailable (${lastErr}). Try tapping again, or use ✏️ Draw Custom Road`);
     return;
   }
-
   if (roads.length === 0) {
-    setStatus('warn', 'No roads found here — try tapping directly on a road line on the map');
+    setStatus('warn', 'No roads found here — tap directly on a road visible on the map');
     return;
   }
 
-  // Add newly loaded roads to layer (skip already approved)
-  const approvedOsmIds = new Set(S.approvedRoads.filter(r=>r.osmId).map(r=>r.osmId));
+  const approvedOsmIds = new Set(S.approvedRoads.filter(r => r.osmId).map(r => r.osmId));
   const newRoads = roads.filter(r => !approvedOsmIds.has(r.osmId));
-  renderOsmRoads(newRoads, false); // false = don't clear existing
+  renderOsmRoads(newRoads, false);
 
-  // Auto-open the nearest road to the tap
-  const nearest = findNearestRoad(lat, lng, newRoads);
+  const nearest = findNearestRoad(lat, lng, newRoads.length ? newRoads : roads);
   if (nearest) {
-    setStatus('ready', `✓ ${newRoads.length} roads found — tap one to classify, or tap elsewhere to find more`);
+    setStatus('ready', `✓ ${newRoads.length} roads loaded — tap one to classify`);
     openClassifyForOsmRoad(nearest);
   } else {
     setStatus('ready', `✓ ${newRoads.length} roads loaded — tap a road to approve it`);
   }
+}
+
+// Parse the OSM XML API response into the same road format as Overpass
+function parseOsmXml(xmlText) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, 'application/xml');
+  if (doc.querySelector('parsererror')) return null;
+
+  const nodes = {};
+  doc.querySelectorAll('node').forEach(n => {
+    nodes[n.getAttribute('id')] = [
+      parseFloat(n.getAttribute('lat')),
+      parseFloat(n.getAttribute('lon'))
+    ];
+  });
+
+  const roads = [];
+  doc.querySelectorAll('way').forEach(w => {
+    // Check if it has a highway tag
+    let highway = '', name = '', ref = '';
+    w.querySelectorAll('tag').forEach(t => {
+      const k = t.getAttribute('k'), v = t.getAttribute('v');
+      if (k === 'highway') highway = v;
+      if (k === 'name') name = v;
+      if (k === 'ref') ref = v;
+    });
+    if (!highway) return;
+
+    const nds = [...w.querySelectorAll('nd')].map(nd => nodes[nd.getAttribute('ref')]).filter(Boolean);
+    if (nds.length < 2) return;
+
+    roads.push({
+      osmId: parseInt(w.getAttribute('id')),
+      name: name || ref || roadTypeLabel(highway),
+      highway,
+      geometry: nds
+    });
+  });
+  return roads;
+}
+
+// Legacy bulk load button
+async function loadOsmRoads() {
+  const zoom = map.getZoom();
+  if (zoom < 14) {
+    setStatus('warn', 'Zoom in closer (level 14+) for bulk load — or just tap the map to find roads instantly');
+    return;
+  }
+  setStatus('loading', 'Loading all roads in view…');
+  document.getElementById('tool-osm').classList.add('active');
+
+  const b = map.getBounds();
+  const west  = b.getWest().toFixed(5),  south = b.getSouth().toFixed(5);
+  const east  = b.getEast().toFixed(5),  north = b.getNorth().toFixed(5);
+
+  let roads = null, lastErr = '';
+
+  // Try OSM API first
+  try {
+    const url = `https://api.openstreetmap.org/api/0.6/map?bbox=${west},${south},${east},${north}`;
+    const resp = await fetchWithTimeout(url, {}, 12000);
+    if (!resp.ok) throw new Error(`OSM API ${resp.status}`);
+    roads = parseOsmXml(await resp.text());
+  } catch(e) { lastErr = e.message || String(e); }
+
+  // Overpass fallback
+  if (!roads) {
+    const query = `[out:json][timeout:10];way["highway"](${south},${west},${north},${east});out body;>;out skel qt;`;
+    for (const ep of OVERPASS_ENDPOINTS) {
+      try {
+        const resp = await fetchWithTimeout(ep, {
+          method:'POST',
+          headers:{'Content-Type':'application/x-www-form-urlencoded'},
+          body:'data='+encodeURIComponent(query)
+        }, 12000);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        roads = parseOverpass(await resp.json());
+        if (roads) break;
+      } catch(e) { lastErr = e.message || String(e); }
+    }
+  }
+
+  document.getElementById('tool-osm').classList.remove('active');
+  if (!roads) {
+    setStatus('warn', `Bulk load failed — tap the map instead to find roads one area at a time`);
+    return;
+  }
+  renderOsmRoads(roads, true);
+  setStatus('ready', `✓ ${S.osmRoadLayers.getLayers().length} roads loaded — tap any to approve`);
+  if (S.tool !== 'selectRoad') setTool('selectRoad');
+}
+
+function parseOverpass(data) {
+  const nodes = {};
+  data.elements.filter(e => e.type === 'node').forEach(n => { nodes[n.id] = [n.lat, n.lon]; });
+  return data.elements.filter(e => e.type === 'way' && e.nodes?.length >= 2).map(w => ({
+    osmId: w.id,
+    name: w.tags?.name || w.tags?.ref || roadTypeLabel(w.tags?.highway),
+    highway: w.tags?.highway || '',
+    maxspeed: w.tags?.maxspeed || '',
+    geometry: w.nodes.map(id => nodes[id]).filter(Boolean)
+  })).filter(w => w.geometry.length >= 2);
+}
+
+function roadTypeLabel(type) {
+  const m = {
+    motorway:'Motorway', trunk:'Trunk Road', primary:'Primary Road',
+    secondary:'Secondary Road', tertiary:'Tertiary Road', unclassified:'Local Road',
+    residential:'Residential Road', service:'Service Road', track:'Farm Track', road:'Road'
+  };
+  return m[type] || 'Unnamed Road';
 }
 
 // Find nearest already-rendered OSM road layer to a point
@@ -1015,7 +1151,7 @@ function findNearestRoad(lat, lng, roads) {
   return best;
 }
 
-// Minimum distance from point to polyline (in degrees, approximate)
+// Minimum distance from point to polyline (degrees, approximate)
 function minDistToPolyline(lat, lng, geometry) {
   let best = Infinity;
   for (let i = 0; i < geometry.length - 1; i++) {
@@ -1024,70 +1160,6 @@ function minDistToPolyline(lat, lng, geometry) {
     if (d < best) best = d;
   }
   return best;
-}
-
-// Legacy "Load Roads from Map" button — now does a viewport query as before
-// but with shorter timeout and smaller area warning
-async function loadOsmRoads() {
-  const zoom = map.getZoom();
-  if (zoom < 14) {
-    setStatus('warn', 'Zoom in closer (zoom 14+) for bulk road load, or just tap the map to find roads instantly');
-    return;
-  }
-
-  setStatus('loading', 'Loading all roads in view…');
-  document.getElementById('tool-osm').classList.add('active');
-
-  const b = map.getBounds();
-  const bbox = `${b.getSouth().toFixed(5)},${b.getWest().toFixed(5)},${b.getNorth().toFixed(5)},${b.getEast().toFixed(5)}`;
-  const query = `[out:json][timeout:12];way["highway"](${bbox});out body;>;out skel qt;`;
-
-  let lastErr = '';
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    try {
-      setStatus('loading', `Trying ${new URL(endpoint).hostname}…`);
-      const resp = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'data=' + encodeURIComponent(query),
-        signal: AbortSignal.timeout(13000)
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      const roads = parseOverpass(data);
-      renderOsmRoads(roads, true);
-      const count = S.osmRoadLayers.getLayers().length;
-      setStatus('ready', `✓ ${count} roads loaded — tap any road to approve it`);
-      document.getElementById('tool-osm').classList.remove('active');
-      if (S.tool !== 'selectRoad') setTool('selectRoad');
-      return;
-    } catch(e) {
-      lastErr = e.message || String(e);
-    }
-  }
-  document.getElementById('tool-osm').classList.remove('active');
-  setStatus('warn', `Bulk load failed — just tap the map instead to find roads instantly`);
-}
-
-function parseOverpass(data) {
-  const nodes = {};
-  data.elements.filter(e => e.type === 'node').forEach(n => { nodes[n.id] = [n.lat, n.lon]; });
-  return data.elements.filter(e => e.type === 'way' && e.nodes?.length >= 2).map(w => ({
-    osmId: w.id,
-    name: w.tags?.name || w.tags?.ref || roadTypeLabel(w.tags?.highway),
-    highway: w.tags?.highway || '',
-    maxspeed: w.tags?.maxspeed || '',
-    geometry: w.nodes.map(id => nodes[id]).filter(Boolean)
-  })).filter(w => w.geometry.length >= 2);
-}
-
-function roadTypeLabel(type) {
-  const m = {
-    motorway:'Motorway', trunk:'Trunk Road', primary:'Primary Road',
-    secondary:'Secondary Road', tertiary:'Tertiary Road', unclassified:'Local Road',
-    residential:'Residential Road', service:'Service Road', track:'Farm Track', road:'Road'
-  };
-  return m[type] || 'Unnamed Road';
 }
 
 function renderOsmRoads(roads, clearFirst = true) {
