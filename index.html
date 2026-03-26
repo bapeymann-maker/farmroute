@@ -1,0 +1,2157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>FarmRoute — Farm Road Navigation</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Barlow:wght@400;500;600&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root {
+  --soil:#1c1a14;--soil-mid:#252215;--soil-light:#2e2a18;--soil-lighter:#3a341e;
+  --border:#4a4228;--border-bright:#6b5e30;
+  --gold:#d4a017;--gold-light:#e8b832;
+  --green-bright:#5a9e3e;
+  --text:#e8dfc0;--text-dim:#9a8f70;--text-muted:#6a614a;
+  --input-bg:#252215;--card-bg:#201e12;--danger:#b03020;--warning:#c07820;
+  --road-both:#5a9e3e;--road-semi:#3a7abf;--road-tractor:#d4a017;
+  --road-full:#8e44ad;--road-empty:#16a085;
+  --nav-bg:#0d0c08;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background:var(--soil);color:var(--text);}
+#layout{display:flex;height:100vh;}
+
+/* SIDEBAR */
+#sidebar{width:360px;min-width:360px;background:var(--soil-mid);border-right:2px solid var(--border);display:flex;flex-direction:column;overflow:hidden;}
+.sidebar-header{background:var(--soil);padding:14px 16px 12px;border-bottom:2px solid var(--border);flex-shrink:0;}
+.app-brand{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+.brand-name{font-family:'Barlow Condensed',sans-serif;font-size:1.4rem;font-weight:900;color:var(--gold-light);letter-spacing:2px;text-transform:uppercase;line-height:1;}
+.brand-tagline{font-size:0.6rem;color:var(--text-muted);letter-spacing:1px;text-transform:uppercase;font-family:'Courier Prime',monospace;}
+.mode-tabs{display:flex;gap:2px;background:var(--soil-lighter);padding:3px;border-radius:6px;border:1px solid var(--border);}
+.mode-tab{flex:1;padding:6px 4px;border:none;border-radius:4px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-size:0.78rem;font-weight:700;text-transform:uppercase;transition:all 0.15s;background:transparent;color:var(--text-muted);}
+.mode-tab.active{background:var(--gold);color:var(--soil);}
+.mode-tab:hover:not(.active){background:var(--soil-lighter);color:var(--text);}
+.sidebar-scroll{flex:1;overflow-y:auto;padding:12px;scrollbar-width:thin;scrollbar-color:var(--border) transparent;}
+::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
+
+/* SECTION HEADERS */
+.sec-hdr{display:flex;justify-content:space-between;align-items:center;margin:14px 0 7px;padding-bottom:5px;border-bottom:1px solid var(--border);}
+.sec-hdr:first-child{margin-top:2px;}
+.sec-label{font-family:'Barlow Condensed',sans-serif;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:var(--text-muted);}
+
+/* BUTTONS */
+.btn{padding:6px 12px;border:1px solid transparent;border-radius:4px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-size:0.8rem;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;transition:all 0.15s;display:inline-flex;align-items:center;gap:5px;}
+.btn-gold{background:var(--gold);color:var(--soil);border-color:var(--gold);}
+.btn-gold:hover{background:var(--gold-light);}
+.btn-ghost{background:transparent;color:var(--text-dim);border-color:var(--border);}
+.btn-ghost:hover{background:var(--soil-lighter);color:var(--text);}
+.btn-danger{background:var(--danger);color:#fff;}
+.btn-danger:hover{background:#cc3a28;}
+.btn-green{background:var(--green-bright);color:#fff;}
+.btn-green:hover{background:#6ab84a;}
+.btn-blue{background:#2a5a8a;color:#90c8f0;border:1px solid #3a7ab0;}
+.btn-blue:hover{background:#336699;}
+.btn-orange{background:#7a4010;color:#f0a060;border:1px solid #a05820;}
+.btn-orange.active-mode{background:#c07020;color:#fff;border-color:#c07020;}
+.btn-sm{padding:4px 8px;font-size:0.72rem;}
+.btn-block{width:100%;justify-content:center;padding:11px;font-size:0.95rem;}
+.btn-gap{margin-top:6px;}
+
+/* TOOL BAR */
+.tool-bar{display:flex;gap:4px;flex-wrap:wrap;padding:8px;background:var(--soil);border-radius:6px;border:1px solid var(--border);margin-bottom:10px;}
+.tool-btn{flex:1;min-width:calc(50% - 4px);padding:8px 6px;border:2px solid var(--border);border-radius:6px;background:var(--card-bg);cursor:pointer;text-align:center;font-family:'Barlow Condensed',sans-serif;font-size:0.78rem;font-weight:700;text-transform:uppercase;color:var(--text-dim);transition:all 0.15s;display:flex;align-items:center;justify-content:center;gap:5px;}
+.tool-btn:hover{border-color:var(--border-bright);color:var(--text);}
+.tool-btn.active{border-color:var(--gold);color:var(--gold);background:#2a2510;}
+.tool-btn.active-green{border-color:var(--green-bright);color:var(--green-bright);background:#0e1e0a;}
+.tool-btn.active-blue{border-color:#4a9adf;color:#4a9adf;background:#0a1828;}
+
+/* CARDS */
+.item-card{background:var(--card-bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:4px;display:flex;align-items:center;gap:8px;}
+.item-card:hover{border-color:var(--border-bright);}
+.card-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
+.card-body{flex:1;min-width:0;}
+.card-name{font-size:0.83rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.card-sub{font-size:0.68rem;color:var(--text-muted);margin-top:1px;font-family:'Courier Prime',monospace;}
+.card-actions{display:flex;gap:4px;}
+.empty-msg{padding:14px;text-align:center;font-size:0.77rem;color:var(--text-muted);border:1px dashed var(--border);border-radius:6px;margin-bottom:6px;line-height:1.5;}
+
+/* FORMS */
+.field{margin-bottom:10px;}
+.field-label{display:block;font-family:'Barlow Condensed',sans-serif;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-muted);margin-bottom:4px;}
+.field-input,.field-select,.field-textarea{width:100%;padding:7px 9px;background:var(--input-bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.85rem;font-family:'Barlow',sans-serif;transition:border-color 0.15s;}
+.field-input:focus,.field-select:focus{outline:none;border-color:var(--gold);}
+.field-select option{background:var(--soil-mid);}
+.field-textarea{resize:vertical;min-height:46px;}
+.check-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px;}
+.check-item{display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--card-bg);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.77rem;}
+.check-item input[type=checkbox]{accent-color:var(--gold);width:13px;height:13px;cursor:pointer;}
+
+/* CLASSIFY PANEL */
+#classify-panel{background:var(--soil-light);border:2px solid var(--gold);border-radius:8px;padding:12px;margin-bottom:10px;display:none;}
+#classify-panel.open{display:block;}
+.classify-title{font-family:'Barlow Condensed',sans-serif;font-size:0.85rem;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--gold-light);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);}
+.classify-actions{display:flex;gap:5px;margin-top:10px;}
+
+/* VEHICLE / LOAD */
+.veh-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:12px;}
+.veh-card{padding:12px 8px;border:2px solid var(--border);border-radius:8px;background:var(--card-bg);cursor:pointer;text-align:center;transition:all 0.15s;}
+.veh-card.active{border-color:var(--gold);background:#2a2510;}
+.veh-icon{font-size:1.8rem;display:block;margin-bottom:4px;}
+.veh-name{font-family:'Barlow Condensed',sans-serif;font-size:0.82rem;font-weight:700;text-transform:uppercase;}
+.veh-card.active .veh-name{color:var(--gold);}
+.load-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:12px;}
+.load-btn{padding:8px 6px;border:2px solid var(--border);border-radius:6px;background:var(--card-bg);cursor:pointer;text-align:center;font-family:'Barlow Condensed',sans-serif;font-size:0.78rem;font-weight:700;text-transform:uppercase;color:var(--text-dim);transition:all 0.15s;}
+.load-btn.active{border-color:var(--gold);color:var(--gold);background:#2a2510;}
+
+/* STATUS BADGES */
+.status-bar{display:flex;align-items:center;gap:8px;padding:7px 9px;background:var(--soil);border-radius:5px;border:1px solid var(--border);margin-bottom:8px;font-size:0.75rem;}
+.status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.status-loading{background:#3a7abf;animation:pulse 1s infinite;}
+.status-ready{background:var(--green-bright);}
+.status-warn{background:var(--warning);}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.4;}}
+
+/* ROUTE RESULT */
+.route-card{background:var(--card-bg);border:1px solid var(--green-bright);border-radius:6px;padding:12px;margin-top:10px;}
+.route-card.error{border-color:var(--danger);}
+.route-header{font-family:'Barlow Condensed',sans-serif;font-size:0.95rem;font-weight:800;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;}
+.route-header.ok{color:var(--green-bright);}.route-header.err{color:var(--danger);}
+.route-stat{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:0.8rem;}
+.route-stat:last-of-type{border-bottom:none;}
+.stat-label{color:var(--text-muted);font-family:'Courier Prime',monospace;font-size:0.7rem;}
+.step-list{margin-top:8px;}
+.step-row{display:flex;align-items:flex-start;gap:8px;padding:6px 4px;border-bottom:1px solid var(--border);font-size:0.77rem;}
+.step-row:last-child{border-bottom:none;}
+.step-num{width:20px;height:20px;background:var(--gold);color:var(--soil);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.6rem;font-weight:700;flex-shrink:0;margin-top:1px;}
+.road-warn{background:#2a1a00;border:1px solid var(--warning);color:#e0a060;border-radius:3px;padding:4px 7px;font-size:0.7rem;margin-top:3px;}
+
+/* LEGEND */
+.legend-bar{padding:8px 12px;background:var(--soil);border-top:2px solid var(--border);flex-shrink:0;}
+.legend-title{font-family:'Barlow Condensed',sans-serif;font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:var(--text-muted);margin-bottom:5px;}
+.legend-items{display:flex;flex-wrap:wrap;gap:6px;}
+.legend-item{display:flex;align-items:center;gap:4px;font-size:0.67rem;color:var(--text-dim);}
+.legend-swatch{width:18px;height:4px;border-radius:2px;}
+
+/* MAP */
+#map-wrap{position:relative;flex:1;}
+#map{width:100%;height:100%;}
+.map-hint{position:absolute;top:12px;left:50%;transform:translateX(-50%);background:rgba(10,8,4,0.93);color:var(--gold-light);padding:10px 20px;border-radius:20px;font-family:'Barlow Condensed',sans-serif;font-size:0.9rem;font-weight:800;letter-spacing:1px;text-transform:uppercase;z-index:1000;border:2px solid var(--gold);pointer-events:none;display:none;white-space:nowrap;}
+.draw-hint{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(10,8,4,0.93);color:#80f080;padding:8px 18px;border-radius:16px;font-family:'Barlow Condensed',sans-serif;font-size:0.82rem;font-weight:700;letter-spacing:0.5px;z-index:1000;border:1px solid #3a8a3a;pointer-events:none;display:none;}
+
+/* NAV OVERLAY */
+#nav-overlay{position:fixed;inset:0;z-index:5000;display:none;flex-direction:column;background:var(--nav-bg);}
+#nav-overlay.active{display:flex;}
+#nav-top{background:#111009;border-bottom:2px solid var(--border);padding:14px 18px 12px;display:flex;align-items:center;gap:16px;flex-shrink:0;}
+#nav-arrow-box{width:86px;height:86px;background:var(--gold);border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:3.4rem;flex-shrink:0;transition:background 0.4s;box-shadow:0 4px 18px rgba(212,160,23,0.35);}
+#nav-arrow-box.arrived{background:var(--green-bright);}
+#nav-main-text{flex:1;min-width:0;}
+#nav-distance{font-family:'Barlow Condensed',sans-serif;font-size:2.7rem;font-weight:900;line-height:1;}
+#nav-road{font-family:'Barlow Condensed',sans-serif;font-size:1.05rem;font-weight:700;color:var(--gold-light);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#nav-instruction{font-size:0.8rem;color:var(--text-dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#nav-progress-wrap{padding:7px 18px;background:#0e0d08;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;gap:10px;}
+#nav-step-label{font-family:'Courier Prime',monospace;font-size:0.72rem;color:var(--text-muted);white-space:nowrap;}
+#nav-progress-bar{flex:1;height:6px;background:var(--soil-lighter);border-radius:3px;overflow:hidden;}
+#nav-progress-fill{height:100%;background:var(--gold);border-radius:3px;transition:width 0.5s ease;}
+#nav-total-dist{font-family:'Courier Prime',monospace;font-size:0.72rem;color:var(--text-muted);white-space:nowrap;}
+#nav-next-wrap{padding:9px 18px;background:#14120c;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;gap:12px;}
+#nav-next-arrow{font-size:1.3rem;flex-shrink:0;}
+#nav-next-label{font-family:'Barlow Condensed',sans-serif;font-size:0.58rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--text-muted);margin-bottom:1px;}
+#nav-next-text{font-size:0.8rem;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#nav-map{flex:1;position:relative;}
+#nav-leaflet{width:100%;height:100%;}
+#nav-arrived-banner{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(8,20,8,0.97);border:3px solid var(--green-bright);border-radius:20px;padding:32px 44px;text-align:center;z-index:100;}
+#nav-arrived-banner.show{display:block;}
+.arrived-title{font-family:'Barlow Condensed',sans-serif;font-size:2.6rem;font-weight:900;color:var(--green-bright);letter-spacing:3px;text-transform:uppercase;}
+.arrived-dest{font-size:1rem;color:var(--text-dim);margin:8px 0 20px;}
+#nav-bottom{background:#0d0c08;border-top:2px solid var(--border);padding:9px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0;}
+#nav-gps-off{color:var(--text-muted);font-family:'Courier Prime',monospace;font-size:0.68rem;}
+#nav-gps-ok{color:var(--green-bright);font-family:'Courier Prime',monospace;font-size:0.68rem;display:none;}
+.nav-btn{padding:9px 14px;border:none;border-radius:7px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-size:0.85rem;font-weight:700;text-transform:uppercase;transition:all 0.15s;white-space:nowrap;}
+.nav-btn-ghost{background:var(--soil-lighter);color:var(--text-dim);border:1px solid var(--border);}
+.nav-btn-next{background:var(--green-bright);color:#fff;}
+.nav-btn-stop{background:var(--danger);color:#fff;}
+.nav-btn-center{background:#152038;color:#80b8e0;border:1px solid #1e3a5a;font-size:0.78rem;}
+
+/* GPS marker */
+.gps-dot{width:14px;height:14px;background:#4af;border:3px solid #fff;border-radius:50%;box-shadow:0 0 10px rgba(70,170,255,0.8);}
+.gps-pulse{width:38px;height:38px;background:rgba(70,170,255,0.15);border:1px solid rgba(70,170,255,0.35);border-radius:50%;animation:gpsPulse 1.6s ease-out infinite;}
+@keyframes gpsPulse{0%{transform:scale(0.4);opacity:1;}100%{transform:scale(1.8);opacity:0;}}
+
+/* Leaflet overrides for dark theme */
+.leaflet-popup-content-wrapper{background:var(--soil-mid);color:var(--text);border:1px solid var(--border-bright);}
+.leaflet-popup-tip{background:var(--soil-mid);}
+
+/* LOGIN SCREEN */
+#login-screen{position:fixed;inset:0;z-index:99000;background:var(--soil);display:flex;align-items:center;justify-content:center;}
+#login-screen.hidden{display:none;}
+.login-box{background:var(--soil-mid);border:2px solid var(--border-bright);border-radius:14px;padding:36px 32px;width:380px;max-width:92vw;box-shadow:0 20px 60px rgba(0,0,0,0.6);}
+.login-brand{text-align:center;margin-bottom:28px;}
+.login-brand-icon{font-size:3rem;display:block;margin-bottom:8px;}
+.login-brand-name{font-family:'Barlow Condensed',sans-serif;font-size:2rem;font-weight:900;color:var(--gold-light);letter-spacing:3px;text-transform:uppercase;}
+.login-brand-tag{font-size:0.65rem;color:var(--text-muted);letter-spacing:2px;text-transform:uppercase;font-family:'Courier Prime',monospace;margin-top:2px;}
+.login-err{background:#2a0e0e;border:1px solid var(--danger);color:#f08080;border-radius:5px;padding:8px 10px;font-size:0.78rem;margin-bottom:12px;display:none;}
+.login-err.show{display:block;}
+.login-btn{width:100%;padding:13px;border:none;border-radius:7px;background:var(--gold);color:var(--soil);font-family:'Barlow Condensed',sans-serif;font-size:1rem;font-weight:800;letter-spacing:1px;text-transform:uppercase;cursor:pointer;transition:all 0.15s;margin-top:4px;}
+.login-btn:hover{background:var(--gold-light);}
+.login-btn:disabled{opacity:0.5;cursor:not-allowed;}
+.login-loading{text-align:center;padding:18px;font-size:0.8rem;color:var(--text-muted);font-family:'Courier Prime',monospace;}
+
+/* USER BAR in sidebar header */
+#user-bar{display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--soil-lighter);border-radius:5px;margin-bottom:10px;}
+#user-bar-info{flex:1;min-width:0;}
+#user-bar-name{font-size:0.78rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#user-bar-role{font-size:0.62rem;font-family:'Courier Prime',monospace;color:var(--text-muted);}
+#user-bar-role.admin{color:var(--gold);}
+#user-bar-signout{padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--text-muted);font-family:'Barlow Condensed',sans-serif;font-size:0.7rem;font-weight:700;text-transform:uppercase;cursor:pointer;white-space:nowrap;}
+#user-bar-signout:hover{background:var(--danger);color:#fff;border-color:var(--danger);}
+
+/* SYNC INDICATOR */
+#sync-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green-bright);margin-left:6px;flex-shrink:0;}
+#sync-dot.syncing{background:var(--gold);animation:pulse 0.8s infinite;}
+#sync-dot.error{background:var(--danger);}
+</style>
+</head>
+<body>
+<!-- LOGIN SCREEN -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-brand">
+      <span class="login-brand-icon">🌾</span>
+      <div class="login-brand-name">FarmRoute</div>
+      <div class="login-brand-tag">Farm Road Navigation System</div>
+    </div>
+    <div class="login-err" id="login-err"></div>
+    <div class="field">
+      <label class="field-label">Email</label>
+      <input type="email" class="field-input" id="login-email" placeholder="your@email.com" autocomplete="email">
+    </div>
+    <div class="field">
+      <label class="field-label">Password</label>
+      <input type="password" class="field-input" id="login-password" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <button class="login-btn" id="login-btn" onclick="doLogin()">Sign In</button>
+    <div style="text-align:center;margin-top:14px;font-size:0.72rem;color:var(--text-muted);">Access is restricted to authorized farm employees only.</div>
+  </div>
+</div>
+
+<div id="layout">
+
+<!-- SIDEBAR -->
+<div id="sidebar">
+  <div class="sidebar-header">
+    <div class="app-brand">
+      <div style="font-size:1.5rem">🌾</div>
+      <div>
+        <div class="brand-name">FarmRoute</div>
+        <div class="brand-tagline">Farm Road Navigation System</div>
+      </div>
+    </div>
+    <div id="user-bar">
+      <div style="font-size:1.1rem">👤</div>
+      <div id="user-bar-info">
+        <div id="user-bar-name">—</div>
+        <div id="user-bar-role">—</div>
+      </div>
+      <div id="sync-dot" title="Synced"></div>
+      <button id="user-bar-signout" onclick="doSignOut()">Sign Out</button>
+    </div>
+    <div class="mode-tabs">
+      <button class="mode-tab active" id="tab-admin" onclick="setMode('admin')">⚙ Admin Setup</button>
+      <button class="mode-tab" id="tab-emp" onclick="setMode('employee')">🚜 Route Planner</button>
+    </div>
+  </div>
+
+  <div class="sidebar-scroll">
+
+    <!-- ADMIN PANEL -->
+    <div id="panel-admin">
+
+      <!-- MAP TOOLS -->
+      <div class="sec-hdr" style="margin-top:2px"><span class="sec-label">🗺 Map Tools</span></div>
+      <div class="tool-bar">
+        <button class="tool-btn" id="tool-loc" onclick="setTool('location')">📍 Place Location</button>
+        <button class="tool-btn" id="tool-road" onclick="setTool('selectRoad')">🖱 Click Road to Approve</button>
+        <button class="tool-btn" id="tool-draw" onclick="setTool('drawRoad')">✏️ Draw Custom Road</button>
+        <button class="tool-btn" id="tool-osm" onclick="loadOsmRoads()">📡 Load Roads from Map</button>
+      </div>
+
+      <div id="status-bar-wrap"></div>
+
+      <!-- CLASSIFY PANEL (appears when road is clicked) -->
+      <div id="classify-panel">
+
+        <!-- STEP 1: Choice — whole road or segment -->
+        <div id="cl-choice">
+          <div class="classify-title" id="cl-choice-title">🛣 Road Selected</div>
+          <div style="font-size:0.78rem;color:var(--text-dim);margin-bottom:10px;line-height:1.5" id="cl-choice-desc">
+            Approve this entire road, or trim it to a specific segment.
+          </div>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-gold btn-sm" style="flex:1;justify-content:center" onclick="chooseWholeRoad()">✅ Whole Road</button>
+            <button class="btn btn-blue btn-sm" style="flex:1;justify-content:center" onclick="chooseSegment()">✂ Select Segment</button>
+          </div>
+          <div style="margin-top:6px;">
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center" onclick="cancelClassify()">Cancel</button>
+          </div>
+        </div>
+
+        <!-- STEP 2: Segment picking instructions -->
+        <div id="cl-segpick" style="display:none">
+          <div class="classify-title">✂ Segment Selection</div>
+          <div id="cl-segpick-status" style="background:var(--soil);border:2px solid var(--gold);border-radius:6px;padding:10px 12px;margin-bottom:10px;font-size:0.82rem;line-height:1.5;color:var(--text);">
+            <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:0.9rem;color:var(--gold-light);margin-bottom:4px;" id="cl-segpick-step">Step 1 of 2</div>
+            <div id="cl-segpick-msg">Click anywhere on the <span style="color:#ffcc44">highlighted road</span> to set your <b>START</b> point</div>
+          </div>
+          <div id="cl-segpick-markers" style="display:none;margin-bottom:8px;font-size:0.75rem;color:var(--text-muted);font-family:'Courier Prime',monospace;line-height:1.8;">
+            <div id="cl-segpick-start-info"></div>
+            <div id="cl-segpick-end-info"></div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px;">
+            <button class="btn btn-ghost btn-sm" onclick="segPickUndo()" id="cl-segpick-undo" style="display:none">↩ Undo Start</button>
+            <div style="flex:1"></div>
+            <button class="btn btn-ghost btn-sm" onclick="cancelClassify()">Cancel</button>
+          </div>
+        </div>
+
+        <!-- STEP 3: Full classify form (shown after whole road or after segment picked) -->
+        <div id="cl-form" style="display:none">
+          <div class="classify-title" id="classify-title">Classify Road</div>
+          <div id="cl-segment-badge" style="display:none;background:#0a1e30;border:1px solid #2a5a80;border-radius:4px;padding:5px 8px;margin-bottom:8px;font-size:0.72rem;color:#80c8f0;font-family:'Courier Prime',monospace;"></div>
+          <div class="field">
+            <label class="field-label">Road Name</label>
+            <input type="text" class="field-input" id="cl-name" placeholder="e.g. US 169 Northbound Segment">
+          </div>
+          <div class="field">
+            <label class="field-label" style="margin-bottom:6px">Who Can Use This Road</label>
+            <div class="check-grid">
+              <label class="check-item"><input type="checkbox" id="cl-tn" checked> 🚜 Tractor (solo)</label>
+              <label class="check-item"><input type="checkbox" id="cl-ts" checked> 🚜 + Sprayer/Planter</label>
+              <label class="check-item"><input type="checkbox" id="cl-tl"> 🚜 + Grain Cart</label>
+              <label class="check-item"><input type="checkbox" id="cl-tw"> 🚜 + Wide Tillage</label>
+              <label class="check-item"><input type="checkbox" id="cl-se" checked> 🚛 Semi (empty)</label>
+              <label class="check-item"><input type="checkbox" id="cl-sf" checked> 🚛 Semi (full)</label>
+            </div>
+          </div>
+          <div class="field">
+            <label class="check-item" style="display:inline-flex;cursor:pointer">
+              <input type="checkbox" id="cl-ow"> &nbsp;One-way only (direction as drawn/selected)
+            </label>
+          </div>
+          <div class="field">
+            <label class="field-label">Notes / Restrictions</label>
+            <textarea class="field-textarea" id="cl-notes" placeholder="e.g. Low bridge, weight limit 40 tons, narrow road, railroad crossing"></textarea>
+          </div>
+          <div class="classify-actions">
+            <button class="btn btn-danger btn-sm" id="cl-remove" onclick="removeApprovedRoad()" style="display:none">🗑 Remove</button>
+            <div style="flex:1"></div>
+            <button class="btn btn-ghost btn-sm" onclick="cancelClassify()">Cancel</button>
+            <button class="btn btn-gold btn-sm" onclick="saveClassify()">✓ Approve Road</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- LOCATIONS -->
+      <div class="sec-hdr"><span class="sec-label">📍 Locations</span></div>
+      <div id="wp-list"></div>
+
+      <!-- APPROVED ROADS -->
+      <div class="sec-hdr">
+        <span class="sec-label">✅ Approved Roads</span>
+        <span id="road-count" style="font-family:'Courier Prime',monospace;font-size:0.68rem;color:var(--text-muted)">0 roads</span>
+      </div>
+      <div id="road-list"></div>
+
+      <!-- DATA TOOLS -->
+      <div style="padding-top:10px;margin-top:6px;border-top:1px solid var(--border);">
+        <div style="margin-bottom:6px">
+          <button class="btn btn-gold btn-sm" style="width:100%;justify-content:center;padding:9px" onclick="document.getElementById('jd-file').click()">
+            🚜 Import John Deere Field Entrances (CSV)
+          </button>
+          <input type="file" id="jd-file" accept=".csv,.txt" style="display:none" onchange="importJohnDeere(event)">
+        </div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;">
+          <button class="btn btn-ghost btn-sm" onclick="exportData()">📤 Export</button>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('imp-file').click()">📥 Import</button>
+          <input type="file" id="imp-file" accept=".json" style="display:none" onchange="importData(event)">
+          <button class="btn btn-ghost btn-sm" onclick="loadSampleData()">📋 Sample Farm</button>
+          <button class="btn btn-danger btn-sm" onclick="clearAll()">🗑 Clear All</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- EMPLOYEE PANEL -->
+    <div id="panel-emp" style="display:none">
+      <div class="sec-hdr" style="margin-top:2px"><span class="sec-label">Vehicle Type</span></div>
+      <div class="veh-grid">
+        <div class="veh-card active" id="veh-semi" onclick="setVehicle('semi')"><span class="veh-icon">🚛</span><span class="veh-name">Semi Truck</span></div>
+        <div class="veh-card" id="veh-tractor" onclick="setVehicle('tractor')"><span class="veh-icon">🚜</span><span class="veh-name">Tractor</span></div>
+      </div>
+      <div id="semi-opts">
+        <div class="sec-hdr"><span class="sec-label">Load Status</span></div>
+        <div class="load-grid">
+          <div class="load-btn active" id="ls-full" onclick="setLoad('full')">📦 Full Load</div>
+          <div class="load-btn" id="ls-empty" onclick="setLoad('empty')">⬜ Empty</div>
+        </div>
+      </div>
+      <div id="tractor-opts" style="display:none">
+        <div class="sec-hdr"><span class="sec-label">Implement / Attachment</span></div>
+        <div class="load-grid">
+          <div class="load-btn active" id="impl-none" onclick="setImpl('none')">🚜 No Implement</div>
+          <div class="load-btn" id="impl-small" onclick="setImpl('small')">💧 Sprayer/Planter</div>
+          <div class="load-btn" id="impl-large" onclick="setImpl('large')">🌽 Grain Cart</div>
+          <div class="load-btn" id="impl-wide" onclick="setImpl('wide')">🔧 Wide Tillage</div>
+        </div>
+      </div>
+      <div class="sec-hdr"><span class="sec-label">Origin & Destination</span></div>
+      <div class="field"><label class="field-label">Starting From</label>
+        <select class="field-select" id="rt-from" onchange="clearResult()"><option value="">— Select location —</option></select></div>
+      <div class="field"><label class="field-label">Going To</label>
+        <select class="field-select" id="rt-to" onchange="clearResult()"><option value="">— Select location —</option></select></div>
+      <button class="btn btn-gold btn-block" onclick="findRoute()">🔍 Find Best Route</button>
+      <button class="btn btn-green btn-block btn-gap" id="start-nav-btn" style="display:none" onclick="startNavigation()">▶ Start Turn-by-Turn Navigation</button>
+      <div id="rt-result"></div>
+    </div>
+
+  </div><!-- /sidebar-scroll -->
+
+  <div class="legend-bar">
+    <div class="legend-title">Road Permissions</div>
+    <div class="legend-items">
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--road-both)"></div>Both</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--road-semi)"></div>Semi Only</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--road-tractor)"></div>Tractor Only</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--road-full)"></div>Full Semi</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--road-empty)"></div>Empty Semi</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#888;"></div>OSM Roads</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#e84040;height:5px"></div>Route</div>
+    </div>
+  </div>
+</div><!-- /sidebar -->
+
+<!-- MAP -->
+<div id="map-wrap">
+  <div id="map"></div>
+  <div class="map-hint" id="map-hint">Click map to place location</div>
+  <div class="draw-hint" id="draw-hint">Click map to add road points — double-click or press Enter to finish</div>
+</div>
+
+</div><!-- /layout -->
+
+<!-- JD IMPORT MODAL -->
+<div id="jd-modal" style="position:fixed;inset:0;background:rgba(10,9,5,0.88);z-index:9000;display:none;align-items:center;justify-content:center;">
+  <div style="background:var(--soil-mid);border:2px solid var(--border-bright);border-radius:10px;padding:22px;width:560px;max-width:95vw;max-height:88vh;display:flex;flex-direction:column;gap:0;">
+    <div style="font-family:'Barlow Condensed',sans-serif;font-size:1.1rem;font-weight:800;text-transform:uppercase;letter-spacing:2px;color:var(--gold-light);margin-bottom:4px;">🚜 John Deere Field Import</div>
+    <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:14px;font-family:'Courier Prime',monospace;" id="jd-file-info"></div>
+
+    <!-- Column mapping -->
+    <div style="background:var(--soil);border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:12px;">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:var(--text-muted);margin-bottom:8px;">Column Mapping</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <div>
+          <label style="display:block;font-size:0.65rem;color:var(--text-muted);font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Farm Column</label>
+          <select class="field-select" id="jd-col-farm" style="font-size:0.8rem;padding:5px 8px;"></select>
+        </div>
+        <div>
+          <label style="display:block;font-size:0.65rem;color:var(--text-muted);font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Field Name Column</label>
+          <select class="field-select" id="jd-col-field" style="font-size:0.8rem;padding:5px 8px;"></select>
+        </div>
+        <div>
+          <label style="display:block;font-size:0.65rem;color:var(--text-muted);font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Latitude Column</label>
+          <select class="field-select" id="jd-col-lat" style="font-size:0.8rem;padding:5px 8px;"></select>
+        </div>
+        <div>
+          <label style="display:block;font-size:0.65rem;color:var(--text-muted);font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Longitude Column</label>
+          <select class="field-select" id="jd-col-lng" style="font-size:0.8rem;padding:5px 8px;"></select>
+        </div>
+        <div>
+          <label style="display:block;font-size:0.65rem;color:var(--text-muted);font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Category Column (optional)</label>
+          <select class="field-select" id="jd-col-cat" style="font-size:0.8rem;padding:5px 8px;"></select>
+        </div>
+        <div>
+          <label style="display:block;font-size:0.65rem;color:var(--text-muted);font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Priority Entrance Label</label>
+          <input type="text" class="field-input" id="jd-main-label" value="main entrance" style="font-size:0.8rem;padding:5px 8px;" placeholder="e.g. main entrance">
+        </div>
+      </div>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:0.78rem;cursor:pointer;">
+          <input type="checkbox" id="jd-multi-entry" style="accent-color:var(--gold)"> Import ALL entrances per field (not just main)
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:0.78rem;cursor:pointer;">
+          <input type="checkbox" id="jd-prefix-farm" checked style="accent-color:var(--gold)"> Prefix name with Farm
+        </label>
+      </div>
+      <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="previewJdImport()">🔄 Refresh Preview</button>
+    </div>
+
+    <!-- Preview table -->
+    <div style="flex:1;overflow-y:auto;min-height:0;margin-bottom:12px;">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:var(--text-muted);margin-bottom:6px;" id="jd-preview-label">Preview</div>
+      <div id="jd-preview-list" style="display:flex;flex-direction:column;gap:3px;"></div>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:12px;border-top:1px solid var(--border);">
+      <button class="btn btn-ghost" onclick="closeJdModal()">Cancel</button>
+      <button class="btn btn-gold" id="jd-confirm-btn" onclick="confirmJdImport()">✓ Import Locations</button>
+    </div>
+  </div>
+</div>
+
+<!-- NAV OVERLAY -->
+<div id="nav-overlay">
+  <div id="nav-top">
+    <div id="nav-arrow-box">⬆</div>
+    <div id="nav-main-text">
+      <div id="nav-distance">— <span style="font-size:1rem;color:var(--text-muted)">mi</span></div>
+      <div id="nav-road">—</div>
+      <div id="nav-instruction">Starting navigation…</div>
+    </div>
+  </div>
+  <div id="nav-progress-wrap">
+    <div id="nav-step-label">Step 1 of 1</div>
+    <div id="nav-progress-bar"><div id="nav-progress-fill" style="width:0%"></div></div>
+    <div id="nav-total-dist">0.0 mi left</div>
+  </div>
+  <div id="nav-next-wrap">
+    <div id="nav-next-arrow">⬆</div>
+    <div><div id="nav-next-label">Then</div><div id="nav-next-text">—</div></div>
+  </div>
+  <div id="nav-map">
+    <div id="nav-leaflet"></div>
+    <div id="nav-arrived-banner">
+      <div class="arrived-title">✓ Arrived</div>
+      <div class="arrived-dest" id="arrived-name">You have reached your destination</div>
+      <button class="nav-btn nav-btn-stop" onclick="stopNavigation()">End Navigation</button>
+    </div>
+  </div>
+  <div id="nav-bottom">
+    <div style="flex:1">
+      <div id="nav-gps-off">📡 GPS not tracking — use Prev/Next</div>
+      <div id="nav-gps-ok">📍 GPS Active</div>
+    </div>
+    <button class="nav-btn nav-btn-center" onclick="centerOnGps()">⊕</button>
+    <button class="nav-btn nav-btn-ghost" onclick="navPrev()">◀ Prev</button>
+    <button class="nav-btn nav-btn-next" onclick="navNext()">Next ▶</button>
+    <button class="nav-btn nav-btn-stop" onclick="stopNavigation()">✕ End</button>
+  </div>
+</div>
+
+<script>
+// ================================================================
+// STATE
+// ================================================================
+const S = {
+  mode: 'admin',
+  tool: 'none',          // none | location | selectRoad | drawRoad
+  waypoints: [],
+  approvedRoads: [],     // roads with real geometry + permissions
+  osmRoadLayers: null,   // L.layerGroup of clickable OSM roads
+  approvedLayers: {},    // roadId -> L.polyline
+  wMarkers: {},
+  routeLayer: null,
+  pendingRoad: null,     // { geometry, osmId, suggestedName } waiting for classification
+  editingRoadId: null,   // id of road being edited
+  drawPoints: [],        // points for custom road drawing
+  drawLayer: null,
+  drawPreviewLayer: null,
+  vehicle: 'semi', load: 'full', impl: 'none',
+  route: null,
+  // segment picking
+  segPickState: null,    // null | 'pickStart' | 'pickEnd'
+  segPickRoad: null,     // the full road object being segmented
+  segPickStart: null,    // {pt, idx, t}
+  segPickEnd: null,      // {pt, idx, t}
+  segPickLayer: null,    // layerGroup for markers + preview line
+  // nav
+  navSteps: [], navCurStep: 0,
+  navGpsWatchId: null, navGpsPos: null,
+  navMap: null, navRouteLayer: null,
+  navGpsMarker: null, navGpsPulse: null,
+  navCenterOnGps: false
+};
+
+let map;
+const WP_ICONS = { field:'🌱', hq:'🏠', shop:'🔧', elevator:'🏗️', bin:'🌾', other:'📍' };
+
+// ================================================================
+// MAP INTERACTIONS
+// ================================================================
+function onMapClick(e) {
+  if (S.tool === 'location') {
+    addWaypoint(e.latlng);
+  } else if (S.tool === 'drawRoad') {
+    S.drawPoints.push([e.latlng.lat, e.latlng.lng]);
+    renderDrawLayer();
+  } else if (S.segPickState === 'pickStart' || S.segPickState === 'pickEnd') {
+    onSegPickClick(e.latlng);
+  }
+}
+
+function onMapDblClick(e) {
+  if (S.tool === 'drawRoad' && S.drawPoints.length >= 2) {
+    L.DomEvent.stop(e);
+    finishDrawRoad();
+  }
+}
+
+let previewLine = null;
+function onMapMove(e) {
+  if (S.tool !== 'drawRoad' || S.drawPoints.length === 0) return;
+  S.drawPreviewLayer.clearLayers();
+  const last = S.drawPoints[S.drawPoints.length - 1];
+  L.polyline([last, [e.latlng.lat, e.latlng.lng]], {
+    color: '#80ff80', weight: 2, opacity: 0.7, dashArray: '5,5'
+  }).addTo(S.drawPreviewLayer);
+}
+
+function onKey(e) {
+  if (e.key === 'Enter' && S.tool === 'drawRoad' && S.drawPoints.length >= 2) finishDrawRoad();
+  if (e.key === 'Escape') {
+    if (S.tool !== 'none') setTool('none');
+    else cancelClassify();
+  }
+}
+
+// ================================================================
+// TOOLS
+// ================================================================
+function setTool(tool) {
+  // Toggle off if same tool
+  if (S.tool === tool) tool = 'none';
+
+  S.tool = tool;
+  S.drawPoints = [];
+  S.drawLayer.clearLayers();
+  S.drawPreviewLayer.clearLayers();
+
+  // Update tool button states
+  ['loc','road','draw','osm'].forEach(t => {
+    const el = document.getElementById('tool-' + t);
+    if (el) el.classList.remove('active','active-green','active-blue');
+  });
+
+  const cursor = 'default';
+  document.getElementById('map-hint').style.display = 'none';
+  document.getElementById('draw-hint').style.display = 'none';
+
+  if (tool === 'location') {
+    document.getElementById('tool-loc').classList.add('active');
+    map.getContainer().style.cursor = 'crosshair';
+    showHint('📍 Click map to place a named location');
+  } else if (tool === 'selectRoad') {
+    document.getElementById('tool-road').classList.add('active-blue');
+    map.getContainer().style.cursor = 'pointer';
+    showHint('🖱 Click any gray road on the map to approve it');
+    // Only auto-load if no roads currently shown
+    if (S.osmRoadLayers.getLayers().length === 0) loadOsmRoads();
+  } else if (tool === 'drawRoad') {
+    document.getElementById('tool-draw').classList.add('active-green');
+    map.getContainer().style.cursor = 'crosshair';
+    document.getElementById('draw-hint').style.display = 'block';
+    document.getElementById('map-hint').style.display = 'none';
+  } else {
+    map.getContainer().style.cursor = '';
+  }
+}
+
+// ================================================================
+// WAYPOINTS
+// ================================================================
+function addWaypoint(latlng) {
+  const name = prompt('Location name (e.g. North Field, Grain Elevator):');
+  if (!name || !name.trim()) return;
+  const types = ['field','hq','shop','elevator','bin','other'];
+  const typeLabels = ['🌱 Field','🏠 Farm HQ','🔧 Shop/Yard','🏗️ Grain Elevator','🌾 Grain Bins','📍 Other'];
+  const choice = prompt(`Type (enter number):\n${typeLabels.map((l,i)=>`${i+1}. ${l}`).join('\n')}`, '1');
+  const typeIdx = Math.max(0, Math.min(5, parseInt(choice||'1') - 1));
+  S.waypoints.push({
+    id: 'wp_' + Date.now(),
+    name: name.trim(),
+    type: types[typeIdx],
+    lat: latlng.lat, lng: latlng.lng
+  });
+  persist(); renderAll();
+}
+
+function delWp(id) {
+  if (!confirm('Delete this location?')) return;
+  S.waypoints = S.waypoints.filter(w => w.id !== id);
+  persist(); renderAll();
+}
+
+function flyTo(id) {
+  const w = S.waypoints.find(x => x.id === id);
+  if (w) map.flyTo([w.lat, w.lng], 15, { duration: 0.7 });
+}
+
+// ================================================================
+// OSM ROAD LOADING
+// ================================================================
+async function loadOsmRoads() {
+  const zoom = map.getZoom();
+  if (zoom < 12) {
+    setStatus('warn', 'Zoom in closer first (zoom level 12+) then try again');
+    return;
+  }
+
+  setStatus('loading', 'Loading roads from OpenStreetMap…');
+  document.getElementById('tool-osm').classList.add('active');
+
+  const b = map.getBounds();
+  const bbox = `${b.getSouth().toFixed(5)},${b.getWest().toFixed(5)},${b.getNorth().toFixed(5)},${b.getEast().toFixed(5)}`;
+  const query = `[out:json][timeout:25];way["highway"](${bbox});out body;>;out skel qt;`;
+
+  // Try multiple Overpass endpoints in order
+  const endpoints = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+    'https://overpass.openstreetmap.ru/api/interpreter'
+  ];
+
+  let lastErr = '';
+  for (const endpoint of endpoints) {
+    try {
+      setStatus('loading', `Trying ${new URL(endpoint).hostname}…`);
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'data=' + encodeURIComponent(query),
+        signal: AbortSignal.timeout(20000)
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      const roads = parseOverpass(data);
+      renderOsmRoads(roads);
+      const count = S.osmRoadLayers.getLayers().length;
+      setStatus('ready', `✓ ${count} roads loaded — click any road to approve it`);
+      if (S.tool !== 'selectRoad') setTool('selectRoad');
+      document.getElementById('tool-osm').classList.remove('active');
+      return; // success
+    } catch(e) {
+      lastErr = e.message || String(e);
+      continue; // try next endpoint
+    }
+  }
+
+  // All endpoints failed
+  document.getElementById('tool-osm').classList.remove('active');
+  setStatus('warn',
+    `Could not load roads (${lastErr}). ` +
+    `Try: 1) Zoom in more  2) Check internet  3) Use ✏️ Draw Custom Road instead`
+  );
+}
+
+function parseOverpass(data) {
+  const nodes = {};
+  data.elements.filter(e => e.type === 'node').forEach(n => { nodes[n.id] = [n.lat, n.lon]; });
+  return data.elements.filter(e => e.type === 'way' && e.nodes?.length >= 2).map(w => ({
+    osmId: w.id,
+    name: w.tags?.name || w.tags?.ref || roadTypeLabel(w.tags?.highway),
+    highway: w.tags?.highway || '',
+    geometry: w.nodes.map(id => nodes[id]).filter(Boolean)
+  })).filter(w => w.geometry.length >= 2);
+}
+
+function roadTypeLabel(type) {
+  const m = { motorway:'Motorway', trunk:'Trunk Road', primary:'Primary Road', secondary:'Secondary Road',
+    tertiary:'Tertiary Road', unclassified:'Local Road', residential:'Residential Road',
+    service:'Service Road', track:'Farm Track', road:'Road' };
+  return m[type] || 'Unnamed Road';
+}
+
+function renderOsmRoads(roads) {
+  S.osmRoadLayers.clearLayers();
+  const approvedOsmIds = new Set(S.approvedRoads.filter(r => r.osmId).map(r => r.osmId));
+
+  roads.forEach(road => {
+    if (approvedOsmIds.has(road.osmId)) return; // already approved, skip
+    const line = L.polyline(road.geometry, {
+      color: '#777', weight: 3, opacity: 0.55
+    });
+    line.on('click', (e) => {
+      L.DomEvent.stop(e);
+      if (S.tool === 'selectRoad') openClassifyForOsmRoad(road);
+    });
+    line.on('mouseover', () => { if (S.tool === 'selectRoad') line.setStyle({ color: '#ffcc44', weight: 5, opacity: 0.9 }); });
+    line.on('mouseout', () => { line.setStyle({ color: '#777', weight: 3, opacity: 0.55 }); });
+    line.bindTooltip(`<b>${road.name}</b><br><small>${road.highway}</small>`, { sticky: true });
+    S.osmRoadLayers.addLayer(line);
+  });
+}
+
+// ================================================================
+// GEOMETRY: SNAP TO ROAD
+// ================================================================
+function nearestPtOnSeg(p, a, b) {
+  const dx = b[0]-a[0], dy = b[1]-a[1];
+  const len2 = dx*dx + dy*dy;
+  if (len2 === 0) return { pt: [...a], t: 0 };
+  const t = Math.max(0, Math.min(1, ((p[0]-a[0])*dx + (p[1]-a[1])*dy) / len2));
+  return { pt: [a[0]+t*dx, a[1]+t*dy], t };
+}
+
+function snapToPolyline(lat, lng, geometry) {
+  let bestDist = Infinity, bestIdx = 0, bestT = 0, bestPt = geometry[0];
+  for (let i = 0; i < geometry.length - 1; i++) {
+    const res = nearestPtOnSeg([lat, lng], geometry[i], geometry[i+1]);
+    const d = haversine(lat, lng, res.pt[0], res.pt[1]);
+    if (d < bestDist) { bestDist = d; bestIdx = i; bestT = res.t; bestPt = res.pt; }
+  }
+  return { pt: bestPt, idx: bestIdx, t: bestT, dist: bestDist };
+}
+
+function extractSubGeometry(geometry, snapA, snapB) {
+  // Normalise so A is always before B along the polyline
+  let a = snapA, b = snapB;
+  const posA = a.idx + a.t;
+  const posB = b.idx + b.t;
+  if (posA > posB) { [a, b] = [b, a]; }
+
+  const pts = [a.pt];
+  // Include all full nodes between a and b
+  for (let i = a.idx + 1; i <= b.idx; i++) pts.push([...geometry[i]]);
+  // Add b's snapped point only if it isn't the same node
+  const last = pts[pts.length - 1];
+  if (Math.abs(b.pt[0] - last[0]) > 1e-8 || Math.abs(b.pt[1] - last[1]) > 1e-8) {
+    pts.push(b.pt);
+  }
+  return pts;
+}
+
+function segPickDistMi(snapA, snapB, geometry) {
+  const sub = extractSubGeometry(geometry, snapA, snapB);
+  let d = 0;
+  for (let i = 1; i < sub.length; i++) d += haversine(sub[i-1][0], sub[i-1][1], sub[i][0], sub[i][1]);
+  return kmToMi(d).toFixed(2);
+}
+
+// ================================================================
+// CLASSIFY PANEL — helpers for showing/hiding sub-panels
+// ================================================================
+function clShow(panel) {
+  ['cl-choice','cl-segpick','cl-form'].forEach(id =>
+    document.getElementById(id).style.display = (id === panel) ? 'block' : 'none'
+  );
+}
+
+// ================================================================
+// CLASSIFY PANEL — entry points
+// ================================================================
+function openClassifyForOsmRoad(road) {
+  S.pendingRoad = { geometry: road.geometry, osmId: road.osmId, suggestedName: road.name };
+  S.editingRoadId = null;
+  clearSegPick();
+
+  document.getElementById('cl-choice-title').textContent = '🛣 ' + road.name;
+  document.getElementById('cl-choice-desc').textContent =
+    `Approve this entire road, or click "Select Segment" to trim it to a specific stretch.`;
+  clShow('cl-choice');
+  document.getElementById('classify-panel').classList.add('open');
+  document.getElementById('classify-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  highlightPendingRoad(road.geometry);
+}
+
+function openClassifyForEdit(id) {
+  const road = S.approvedRoads.find(r => r.id === id);
+  if (!road) return;
+  S.editingRoadId = id;
+  S.pendingRoad = null;
+  clearSegPick();
+  populateClassifyForm(road.name, road);
+  document.getElementById('cl-remove').style.display = 'inline-flex';
+  document.getElementById('classify-title').textContent = '✏️ Edit: ' + road.name;
+  document.getElementById('cl-segment-badge').style.display = 'none';
+  clShow('cl-form');
+  document.getElementById('classify-panel').classList.add('open');
+  document.getElementById('classify-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  if (S.approvedLayers[id]) S.approvedLayers[id].setStyle({ weight: 8, opacity: 1 });
+}
+
+function populateClassifyForm(name, road) {
+  document.getElementById('cl-name').value = name || '';
+  document.getElementById('cl-ow').checked   = road ? !!road.oneWay : false;
+  document.getElementById('cl-notes').value  = road ? road.notes || '' : '';
+  document.getElementById('cl-tn').checked   = road ? !!road.permissions.tractorNone  : true;
+  document.getElementById('cl-ts').checked   = road ? !!road.permissions.tractorSmall : true;
+  document.getElementById('cl-tl').checked   = road ? !!road.permissions.tractorLarge : false;
+  document.getElementById('cl-tw').checked   = road ? !!road.permissions.tractorWide  : false;
+  document.getElementById('cl-se').checked   = road ? !!road.permissions.semiEmpty    : true;
+  document.getElementById('cl-sf').checked   = road ? !!road.permissions.semiFull     : true;
+  document.getElementById('cl-remove').style.display = 'none';
+}
+
+// ================================================================
+// CHOICE BUTTONS
+// ================================================================
+function chooseWholeRoad() {
+  const name = S.pendingRoad?.suggestedName || 'Road';
+  populateClassifyForm(name, null);
+  document.getElementById('classify-title').textContent = '🛣 Classify: ' + name;
+  document.getElementById('cl-segment-badge').style.display = 'none';
+  clShow('cl-form');
+}
+
+function chooseSegment() {
+  if (!S.pendingRoad) return;
+  S.segPickRoad  = S.pendingRoad;
+  S.segPickState = 'pickStart';
+  S.segPickStart = null;
+  S.segPickEnd   = null;
+  if (!S.segPickLayer) S.segPickLayer = L.layerGroup().addTo(map);
+  S.segPickLayer.clearLayers();
+
+  clShow('cl-segpick');
+  document.getElementById('cl-segpick-markers').style.display = 'none';
+  document.getElementById('cl-segpick-undo').style.display = 'none';
+  updateSegPickUI();
+  showHint('✂ Click your START point on the highlighted road');
+  map.getContainer().style.cursor = 'crosshair';
+}
+
+// ================================================================
+// SEGMENT PICKING — click handling
+// ================================================================
+function onSegPickClick(latlng) {
+  if (!S.segPickRoad) return;
+  const snap = snapToPolyline(latlng.lat, latlng.lng, S.segPickRoad.geometry);
+
+  if (S.segPickState === 'pickStart') {
+    S.segPickStart = snap;
+    S.segPickState = 'pickEnd';
+    renderSegPickMarkers();
+    updateSegPickUI();
+    showHint('✂ Now click your END point on the highlighted road');
+  } else if (S.segPickState === 'pickEnd') {
+    S.segPickEnd = snap;
+    S.segPickState = null;
+
+    const subGeo = extractSubGeometry(S.segPickRoad.geometry, S.segPickStart, S.segPickEnd);
+    const distMi = segPickDistMi(S.segPickStart, S.segPickEnd, S.segPickRoad.geometry);
+
+    // Replace pending road geometry with the trimmed segment
+    S.pendingRoad = {
+      geometry: subGeo,
+      osmId: S.segPickRoad.osmId,
+      suggestedName: S.segPickRoad.suggestedName
+    };
+
+    // Update highlight to show trimmed segment only
+    if (highlightLayer) { map.removeLayer(highlightLayer); highlightLayer = null; }
+    highlightLayer = L.polyline(subGeo, { color: '#ffcc44', weight: 7, opacity: 0.95 }).addTo(map);
+
+    // Show the form
+    const name = S.segPickRoad.suggestedName + ' (Segment)';
+    populateClassifyForm(name, null);
+    document.getElementById('classify-title').textContent = '✂ Classify Segment';
+    document.getElementById('cl-segment-badge').textContent = `✂ Trimmed segment · ${distMi} mi · ${subGeo.length} points`;
+    document.getElementById('cl-segment-badge').style.display = 'block';
+    clShow('cl-form');
+
+    hideHint();
+    map.getContainer().style.cursor = 'pointer';
+    renderSegPickMarkers();
+  }
+}
+
+function updateSegPickUI() {
+  const hasStart = !!S.segPickStart;
+  document.getElementById('cl-segpick-step').textContent = hasStart ? 'Step 2 of 2' : 'Step 1 of 2';
+  document.getElementById('cl-segpick-msg').innerHTML = hasStart
+    ? `Start set ✓ — now click your <b>END point</b> on the highlighted road`
+    : `Click anywhere on the <span style="color:#ffcc44">highlighted road</span> to set your <b>START</b> point`;
+  document.getElementById('cl-segpick-undo').style.display = hasStart ? 'inline-flex' : 'none';
+
+  if (hasStart) {
+    document.getElementById('cl-segpick-markers').style.display = 'block';
+    document.getElementById('cl-segpick-start-info').textContent =
+      `🟢 Start: ${S.segPickStart.pt[0].toFixed(5)}, ${S.segPickStart.pt[1].toFixed(5)}`;
+    document.getElementById('cl-segpick-end-info').textContent = S.segPickEnd
+      ? `🔴 End:   ${S.segPickEnd.pt[0].toFixed(5)}, ${S.segPickEnd.pt[1].toFixed(5)}`
+      : '🔴 End:   (not set yet)';
+  }
+}
+
+function renderSegPickMarkers() {
+  if (!S.segPickLayer) return;
+  S.segPickLayer.clearLayers();
+
+  if (S.segPickStart) {
+    // Green start marker
+    L.circleMarker(S.segPickStart.pt, {
+      radius: 9, color: '#fff', weight: 3, fillColor: '#3dcc3d', fillOpacity: 1
+    }).bindTooltip('START', { permanent: false }).addTo(S.segPickLayer);
+  }
+  if (S.segPickEnd) {
+    // Red end marker
+    L.circleMarker(S.segPickEnd.pt, {
+      radius: 9, color: '#fff', weight: 3, fillColor: '#e84040', fillOpacity: 1
+    }).bindTooltip('END', { permanent: false }).addTo(S.segPickLayer);
+  }
+  if (S.segPickStart && S.segPickEnd) {
+    // Preview the selected sub-segment in bright cyan
+    const sub = extractSubGeometry(S.segPickRoad.geometry, S.segPickStart, S.segPickEnd);
+    L.polyline(sub, { color: '#00ffcc', weight: 6, opacity: 0.85 }).addTo(S.segPickLayer);
+  }
+}
+
+function segPickUndo() {
+  S.segPickStart = null;
+  S.segPickEnd   = null;
+  S.segPickState = 'pickStart';
+  if (S.segPickLayer) S.segPickLayer.clearLayers();
+  updateSegPickUI();
+  showHint('✂ Click your START point on the highlighted road');
+}
+
+function clearSegPick() {
+  S.segPickState = null;
+  S.segPickRoad  = null;
+  S.segPickStart = null;
+  S.segPickEnd   = null;
+  if (S.segPickLayer) S.segPickLayer.clearLayers();
+}
+
+// ================================================================
+// HIGHLIGHT
+// ================================================================
+let highlightLayer = null;
+function highlightPendingRoad(geometry) {
+  if (highlightLayer) map.removeLayer(highlightLayer);
+  highlightLayer = L.polyline(geometry, { color: '#ffcc44', weight: 7, opacity: 0.9 }).addTo(map);
+  map.fitBounds(highlightLayer.getBounds(), { padding: [60, 60], maxZoom: 16 });
+}
+
+// ================================================================
+// SAVE / CANCEL
+// ================================================================
+function saveClassify() {
+  const name = document.getElementById('cl-name').value.trim();
+  if (!name) { alert('Please enter a road name.'); return; }
+
+  const perms = {
+    tractorNone:  document.getElementById('cl-tn').checked,
+    tractorSmall: document.getElementById('cl-ts').checked,
+    tractorLarge: document.getElementById('cl-tl').checked,
+    tractorWide:  document.getElementById('cl-tw').checked,
+    semiEmpty:    document.getElementById('cl-se').checked,
+    semiFull:     document.getElementById('cl-sf').checked
+  };
+
+  if (S.editingRoadId) {
+    const road = S.approvedRoads.find(r => r.id === S.editingRoadId);
+    if (road) {
+      road.name = name;
+      road.permissions = perms;
+      road.oneWay = document.getElementById('cl-ow').checked;
+      road.notes = document.getElementById('cl-notes').value.trim();
+    }
+  } else if (S.pendingRoad) {
+    S.approvedRoads.push({
+      id: 'road_' + Date.now(),
+      osmId: S.pendingRoad.osmId || null,
+      name,
+      geometry: S.pendingRoad.geometry,
+      permissions: perms,
+      oneWay: document.getElementById('cl-ow').checked,
+      notes: document.getElementById('cl-notes').value.trim()
+    });
+  }
+
+  if (highlightLayer) { map.removeLayer(highlightLayer); highlightLayer = null; }
+  cancelClassify();
+  persist();
+  renderApprovedRoads();
+  renderRoadList();
+  loadOsmRoads();
+}
+
+function cancelClassify() {
+  document.getElementById('classify-panel').classList.remove('open');
+  S.pendingRoad = null;
+  S.editingRoadId = null;
+  clearSegPick();
+  if (highlightLayer) { map.removeLayer(highlightLayer); highlightLayer = null; }
+  hideHint();
+  map.getContainer().style.cursor = S.tool === 'selectRoad' ? 'pointer' : '';
+  Object.entries(S.approvedLayers).forEach(([id, layer]) => {
+    const road = S.approvedRoads.find(r => r.id === id);
+    if (road) layer.setStyle({ color: roadColor(road), weight: 5, opacity: 0.85 });
+  });
+}
+
+function removeApprovedRoad() {
+  if (!S.editingRoadId) return;
+  if (!confirm('Remove this road from approved list?')) return;
+  S.approvedRoads = S.approvedRoads.filter(r => r.id !== S.editingRoadId);
+  if (S.approvedLayers[S.editingRoadId]) {
+    map.removeLayer(S.approvedLayers[S.editingRoadId]);
+    delete S.approvedLayers[S.editingRoadId];
+  }
+  cancelClassify();
+  persist();
+  renderRoadList();
+  loadOsmRoads();
+}
+
+// ================================================================
+// CUSTOM ROAD DRAWING
+// ================================================================
+function renderDrawLayer() {
+  S.drawLayer.clearLayers();
+  if (S.drawPoints.length === 0) return;
+  // Draw dots
+  S.drawPoints.forEach((pt, i) => {
+    L.circleMarker(pt, { radius: 5, color: '#fff', weight: 2, fillColor: '#80ff80', fillOpacity: 1 }).addTo(S.drawLayer);
+  });
+  // Draw line
+  if (S.drawPoints.length >= 2) {
+    L.polyline(S.drawPoints, { color: '#80ff80', weight: 4, opacity: 0.9 }).addTo(S.drawLayer);
+  }
+}
+
+function finishDrawRoad() {
+  if (S.drawPoints.length < 2) return;
+  S.pendingRoad = { geometry: [...S.drawPoints], osmId: null, suggestedName: 'Custom Farm Road' };
+  S.editingRoadId = null;
+  document.getElementById('cl-name').value = 'Custom Farm Road';
+  document.getElementById('cl-ow').checked = false;
+  document.getElementById('cl-notes').value = '';
+  ['cl-tn','cl-ts','cl-se','cl-sf'].forEach(id => document.getElementById(id).checked = true);
+  ['cl-tl','cl-tw'].forEach(id => document.getElementById(id).checked = false);
+  document.getElementById('cl-remove').style.display = 'none';
+  document.getElementById('classify-title').textContent = '✏️ Classify Custom Road';
+  document.getElementById('classify-panel').classList.add('open');
+  document.getElementById('classify-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  highlightPendingRoad(S.drawPoints);
+  S.drawLayer.clearLayers();
+  S.drawPreviewLayer.clearLayers();
+  S.drawPoints = [];
+  setTool('none');
+  document.getElementById('draw-hint').style.display = 'none';
+}
+
+// ================================================================
+// ROAD COLORS & RENDERING
+// ================================================================
+function roadColor(road) {
+  const p = road.permissions;
+  const hasTr = p.tractorNone || p.tractorSmall || p.tractorLarge || p.tractorWide;
+  const sf = p.semiFull, se = p.semiEmpty;
+  if (hasTr && (sf || se)) return '#5a9e3e';
+  if (!hasTr && sf && !se) return '#8e44ad';
+  if (!hasTr && !sf && se) return '#16a085';
+  if (!hasTr && (sf || se)) return '#3a7abf';
+  if (hasTr) return '#d4a017';
+  return '#666';
+}
+
+function roadDesc(road) {
+  const p = road.permissions;
+  const hasTr = p.tractorNone || p.tractorSmall || p.tractorLarge || p.tractorWide;
+  const parts = [];
+  if (hasTr) parts.push('Tractor');
+  if (p.semiFull && p.semiEmpty) parts.push('Semi (any)');
+  else if (p.semiFull) parts.push('Full Semi');
+  else if (p.semiEmpty) parts.push('Empty Semi');
+  return parts.join(', ') || 'No vehicles';
+}
+
+function renderApprovedRoads() {
+  // Remove old layers
+  Object.values(S.approvedLayers).forEach(l => map.removeLayer(l));
+  S.approvedLayers = {};
+  for (const road of S.approvedRoads) {
+    const c = roadColor(road);
+    const line = L.polyline(road.geometry, { color: c, weight: 5, opacity: 0.85 });
+    line.on('click', (e) => {
+      L.DomEvent.stop(e);
+      if (S.mode === 'admin') openClassifyForEdit(road.id);
+    });
+    line.bindTooltip(
+      `<b>${road.name}</b>${road.oneWay ? ' ⬆ one-way' : ''}<br><small>${roadDesc(road)}</small>${road.notes ? `<br><small>⚠ ${road.notes}</small>` : ''}`,
+      { sticky: true }
+    );
+    line.addTo(map);
+    S.approvedLayers[road.id] = line;
+  }
+}
+
+// ================================================================
+// ROUTING ENGINE
+// ================================================================
+function haversine(la1, lo1, la2, lo2) {
+  const R = 6371, dLa = (la2-la1)*Math.PI/180, dLo = (lo2-lo1)*Math.PI/180;
+  const a = Math.sin(dLa/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dLo/2)**2;
+  return R * 2 * Math.asin(Math.sqrt(a));
+}
+function kmToMi(km) { return km * 0.621371; }
+function bearing(la1, lo1, la2, lo2) {
+  const dLo = (lo2-lo1)*Math.PI/180, r1 = la1*Math.PI/180, r2 = la2*Math.PI/180;
+  return ((Math.atan2(Math.sin(dLo)*Math.cos(r2), Math.cos(r1)*Math.sin(r2)-Math.sin(r1)*Math.cos(r2)*Math.cos(dLo))*180/Math.PI)+360)%360;
+}
+function compassDir(deg) { return ['N','NE','E','SE','S','SW','W','NW'][Math.round(deg/45)%8]; }
+function nodeKey(pt) { return `${pt[0].toFixed(4)},${pt[1].toFixed(4)}`; }
+function roadLength(road) {
+  let d = 0;
+  for (let i = 1; i < road.geometry.length; i++)
+    d += haversine(road.geometry[i-1][0], road.geometry[i-1][1], road.geometry[i][0], road.geometry[i][1]);
+  return d;
+}
+function turnInfo(pb, nb) {
+  const d = ((nb-pb+540)%360)-180;
+  if (d > 150 || d < -150) return { arrow:'↩', text:'Make a U-turn' };
+  if (d > 90)  return { arrow:'↱', text:'Turn sharp right' };
+  if (d > 35)  return { arrow:'→', text:'Turn right' };
+  if (d > 12)  return { arrow:'↗', text:'Keep right' };
+  if (d > -12) return { arrow:'⬆', text:'Continue straight' };
+  if (d > -35) return { arrow:'↖', text:'Keep left' };
+  if (d > -90) return { arrow:'←', text:'Turn left' };
+  return { arrow:'↰', text:'Turn sharp left' };
+}
+
+function isRoadAllowed(road, vehicle, config) {
+  const p = road.permissions;
+  if (vehicle === 'semi') return config === 'full' ? !!p.semiFull : !!p.semiEmpty;
+  return ({ none:!!p.tractorNone, small:!!p.tractorSmall, large:!!p.tractorLarge, wide:!!p.tractorWide }[config] || false);
+}
+
+// Find nearest graph node to a lat/lng
+function nearestNode(lat, lng, allNodeKeys) {
+  let best = null, bestD = Infinity;
+  for (const k of allNodeKeys) {
+    const [la, lo] = k.split(',').map(Number);
+    const d = haversine(lat, lng, la, lo);
+    if (d < bestD) { bestD = d; best = k; }
+  }
+  return { key: best, dist: bestD };
+}
+
+function findRoute() {
+  const fromId = document.getElementById('rt-from').value;
+  const toId = document.getElementById('rt-to').value;
+  if (!fromId || !toId) return showErr('Select both origin and destination.');
+  if (fromId === toId) return showErr('Origin and destination must be different.');
+
+  const v = S.vehicle, c = v === 'semi' ? S.load : S.impl;
+  const allowed = S.approvedRoads.filter(r => isRoadAllowed(r, v, c));
+
+  if (allowed.length === 0) return showErr('No approved roads found for this vehicle/load type.<br>Go to Admin Setup and approve some roads first.');
+
+  // Build graph: nodeKey → [{to, roadId, dist}]
+  const G = {};
+  for (const road of allowed) {
+    const g = road.geometry;
+    const fk = nodeKey(g[0]);
+    const tk = nodeKey(g[g.length - 1]);
+    const d = roadLength(road);
+    if (!G[fk]) G[fk] = [];
+    G[fk].push({ to: tk, roadId: road.id, dist: d });
+    if (!road.oneWay) {
+      if (!G[tk]) G[tk] = [];
+      G[tk].push({ to: fk, roadId: road.id, dist: d });
+    }
+  }
+
+  const allNodes = Object.keys(G);
+  if (allNodes.length === 0) return showErr('No road network found. Approve some roads first.');
+
+  // Snap origin/destination to nearest road node
+  const fromWp = S.waypoints.find(w => w.id === fromId);
+  const toWp = S.waypoints.find(w => w.id === toId);
+  const fromSnap = nearestNode(fromWp.lat, fromWp.lng, allNodes);
+  const toSnap = nearestNode(toWp.lat, toWp.lng, allNodes);
+
+  if (fromSnap.dist > 2) return showErr(`No approved roads within 2km of "${fromWp.name}".<br>Make sure roads are approved near your start point.`);
+  if (toSnap.dist > 2) return showErr(`No approved roads within 2km of "${toWp.name}".<br>Make sure roads are approved near your destination.`);
+
+  // Dijkstra
+  const dist = {}, prev = {}, vis = new Set();
+  allNodes.forEach(n => dist[n] = Infinity);
+  dist[fromSnap.key] = 0;
+  const pq = [{ id: fromSnap.key, d: 0 }];
+  while (pq.length) {
+    pq.sort((a, b) => a.d - b.d);
+    const { id: cur } = pq.shift();
+    if (vis.has(cur)) continue;
+    vis.add(cur);
+    if (cur === toSnap.key) break;
+    for (const e of (G[cur] || [])) {
+      const nd = dist[cur] + e.dist;
+      if (nd < dist[e.to]) {
+        dist[e.to] = nd;
+        prev[e.to] = { from: cur, roadId: e.roadId };
+        pq.push({ id: e.to, d: nd });
+      }
+    }
+  }
+
+  if (dist[toSnap.key] === Infinity) {
+    return showErr('No connected route found between these points.<br>The approved roads may not form a connected path.');
+  }
+
+  // Reconstruct path
+  const roadIds = [];
+  let cur = toSnap.key;
+  while (prev[cur]) {
+    roadIds.unshift(prev[cur].roadId);
+    cur = prev[cur].from;
+  }
+
+  S.route = { roadIds, fromWp, toWp, km: dist[toSnap.key] };
+  drawRouteOnMap(S.route);
+  showRouteResult(S.route);
+  document.getElementById('start-nav-btn').style.display = 'flex';
+}
+
+function drawRouteOnMap(route) {
+  S.routeLayer.clearLayers();
+  for (const rid of route.roadIds) {
+    const road = S.approvedRoads.find(r => r.id === rid);
+    if (!road) continue;
+    L.polyline(road.geometry, { color: '#e84040', weight: 12, opacity: 0.4 }).addTo(S.routeLayer);
+    L.polyline(road.geometry, { color: '#ff5555', weight: 4, opacity: 1 }).addTo(S.routeLayer);
+  }
+  // Fit bounds to route
+  const allPts = route.roadIds.flatMap(rid => {
+    const r = S.approvedRoads.find(x => x.id === rid);
+    return r ? r.geometry : [];
+  });
+  if (allPts.length) map.fitBounds(allPts, { padding: [50, 50] });
+}
+
+// ================================================================
+// NAV STEPS
+// ================================================================
+function buildNavSteps(route) {
+  const steps = [];
+  const roads = route.roadIds.map(id => S.approvedRoads.find(r => r.id === id)).filter(Boolean);
+
+  for (let i = 0; i < roads.length; i++) {
+    const road = roads[i];
+    const g = road.geometry;
+    // Approach bearing: bearing of first segment of this road
+    const departBear = bearing(g[0][0], g[0][1], g[1][0], g[1][1]);
+    let turn;
+    if (i === 0) {
+      turn = { arrow: '⬆', text: 'Head ' + compassDir(departBear) };
+    } else {
+      // Approach bearing: last segment of previous road
+      const pg = roads[i-1].geometry;
+      const approachBear = bearing(pg[pg.length-2][0], pg[pg.length-2][1], pg[pg.length-1][0], pg[pg.length-1][1]);
+      turn = turnInfo(approachBear, departBear);
+    }
+    steps.push({
+      type: 'step',
+      roadId: road.id,
+      roadName: road.name,
+      distKm: roadLength(road),
+      arrow: turn.arrow,
+      instruction: `${turn.text} onto ${road.name}`,
+      notes: road.notes || '',
+      geometry: g
+    });
+  }
+
+  // Arrival
+  steps.push({
+    type: 'arrive',
+    roadId: null,
+    roadName: '',
+    distKm: 0,
+    arrow: '🏁',
+    instruction: `Arrive at ${route.toWp.name}`,
+    notes: ''
+  });
+
+  return steps;
+}
+
+function showRouteResult(route) {
+  const mi = kmToMi(route.km).toFixed(2);
+  const vLabel = S.vehicle === 'semi'
+    ? `Semi (${S.load === 'full' ? 'Full Load' : 'Empty'})`
+    : `Tractor (${({none:'No Implement',small:'Sprayer/Planter',large:'Grain Cart',wide:'Wide Tillage'})[S.impl]})`;
+  const steps = buildNavSteps(route);
+  const rows = steps.map((s, i) => `
+    <div class="step-row">
+      <div class="step-num">${s.type==='arrive'?'🏁':(i+1)}</div>
+      <div style="font-size:1rem;flex-shrink:0">${s.arrow}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:0.77rem;font-weight:600">${s.instruction}</div>
+        ${s.type!=='arrive'?`<div style="font-size:0.67rem;color:var(--text-muted)">${kmToMi(s.distKm).toFixed(2)} mi</div>`:''}
+        ${s.notes?`<div class="road-warn">⚠ ${s.notes}</div>`:''}
+      </div>
+    </div>`).join('');
+  document.getElementById('rt-result').innerHTML = `
+    <div class="route-card">
+      <div class="route-header ok">✓ Route Found</div>
+      <div class="route-stat"><span class="stat-label">VEHICLE</span><span>${vLabel}</span></div>
+      <div class="route-stat"><span class="stat-label">DISTANCE</span><span>${mi} mi (${route.km.toFixed(2)} km)</span></div>
+      <div class="route-stat"><span class="stat-label">ROADS</span><span>${route.roadIds.length}</span></div>
+      <div class="step-list">${rows}</div>
+    </div>`;
+}
+
+function showErr(msg) {
+  document.getElementById('rt-result').innerHTML = `<div class="route-card error"><div class="route-header err">⚠ No Route</div><div style="font-size:0.8rem;color:var(--text-dim);line-height:1.5">${msg}</div></div>`;
+  S.routeLayer.clearLayers();
+  document.getElementById('start-nav-btn').style.display = 'none';
+}
+function clearResult() {
+  document.getElementById('rt-result').innerHTML = '';
+  S.routeLayer.clearLayers();
+  document.getElementById('start-nav-btn').style.display = 'none';
+}
+
+// ================================================================
+// NAVIGATION
+// ================================================================
+function startNavigation() {
+  if (!S.route) return;
+  S.navSteps = buildNavSteps(S.route);
+  S.navCurStep = 0;
+  document.getElementById('nav-overlay').classList.add('active');
+  document.getElementById('nav-arrived-banner').classList.remove('show');
+
+  if (!S.navMap) {
+    S.navMap = L.map('nav-leaflet', { zoomControl: true, attributionControl: false }).setView([44.152, -94.005], 14);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      attribution: '© CARTO © OpenStreetMap', subdomains: 'abcd', maxZoom: 19
+    }).addTo(S.navMap);
+    S.navRouteLayer = L.layerGroup().addTo(S.navMap);
+    S.waypoints.forEach(wp => {
+      const ico = L.divIcon({ html: `<div style="font-size:15px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.9))">${WP_ICONS[wp.type]||'📍'}</div>`, iconSize:[18,18], iconAnchor:[9,9], className:'' });
+      L.marker([wp.lat, wp.lng], { icon: ico }).addTo(S.navMap).bindTooltip(`<b>${wp.name}</b>`, { direction:'top' });
+    });
+  }
+  setTimeout(() => S.navMap.invalidateSize(), 120);
+  drawNavRoute();
+  updateNavDisplay();
+  startGps();
+  speak(S.navSteps[0]?.instruction || 'Starting navigation');
+}
+
+function stopNavigation() {
+  document.getElementById('nav-overlay').classList.remove('active');
+  stopGps();
+  document.getElementById('nav-arrived-banner').classList.remove('show');
+  if (S.navMap) { S.navMap.remove(); S.navMap = null; S.navRouteLayer = null; S.navGpsMarker = null; S.navGpsPulse = null; }
+}
+
+function drawNavRoute() {
+  if (!S.navRouteLayer) return;
+  S.navRouteLayer.clearLayers();
+  S.route.roadIds.forEach((rid, i) => {
+    const road = S.approvedRoads.find(r => r.id === rid);
+    if (!road) return;
+    const active = i === S.navCurStep;
+    const done = i < S.navCurStep;
+    const color = done ? '#5a9e3e' : active ? '#ff4040' : '#ff8844';
+    const weight = active ? 9 : 4;
+    L.polyline(road.geometry, { color, weight, opacity: done ? 0.5 : 0.88 }).addTo(S.navRouteLayer);
+  });
+  // Waypoint dots
+  S.navSteps.forEach((step, i) => {
+    if (step.type === 'arrive') {
+      L.circleMarker([S.route.toWp.lat, S.route.toWp.lng], { radius: 9, color:'#fff', weight:2, fillColor:'#e8b832', fillOpacity:1 }).addTo(S.navRouteLayer);
+    } else if (i === S.navCurStep) {
+      const g = step.geometry;
+      L.circleMarker(g[0], { radius: 9, color:'#fff', weight:2, fillColor:'#ff4040', fillOpacity:1 }).addTo(S.navRouteLayer);
+    }
+  });
+}
+
+function updateNavDisplay() {
+  const step = S.navSteps[S.navCurStep];
+  if (!step) return;
+  const isArrive = step.type === 'arrive';
+
+  document.getElementById('nav-arrow-box').textContent = step.arrow;
+  document.getElementById('nav-arrow-box').classList.toggle('arrived', isArrive);
+
+  if (isArrive) {
+    document.getElementById('nav-distance').innerHTML = '<span style="color:var(--green-bright);font-size:2rem">ARRIVED</span>';
+  } else {
+    const mi = kmToMi(step.distKm);
+    const ds = mi < 0.2 ? Math.round(mi * 5280) + ' <span style="font-size:1rem;color:var(--text-muted)">ft</span>' : mi.toFixed(2) + ' <span style="font-size:1rem;color:var(--text-muted)">mi</span>';
+    document.getElementById('nav-distance').innerHTML = ds;
+  }
+  document.getElementById('nav-road').textContent = isArrive ? S.route.toWp.name : step.roadName;
+  document.getElementById('nav-instruction').textContent = step.notes ? step.instruction + ' — ⚠ ' + step.notes : step.instruction;
+
+  const next = S.navSteps[S.navCurStep + 1];
+  document.getElementById('nav-next-arrow').textContent = next ? next.arrow : '🏁';
+  document.getElementById('nav-next-text').textContent = next ? next.instruction : 'Destination reached';
+
+  const total = Math.max(S.navSteps.length - 1, 1);
+  document.getElementById('nav-progress-fill').style.width = ((S.navCurStep / total) * 100) + '%';
+  document.getElementById('nav-step-label').textContent = `Step ${S.navCurStep + 1} of ${S.navSteps.length}`;
+  let rem = 0;
+  for (let i = S.navCurStep; i < S.navSteps.length; i++) rem += S.navSteps[i].distKm || 0;
+  document.getElementById('nav-total-dist').textContent = kmToMi(rem).toFixed(2) + ' mi left';
+
+  drawNavRoute();
+
+  if (!isArrive && !S.navGpsPos && S.navMap && step.geometry) {
+    S.navMap.setView(step.geometry[0], 15, { animate: true, duration: 0.5 });
+  }
+
+  if (isArrive) {
+    document.getElementById('arrived-name').textContent = 'You have reached ' + S.route.toWp.name;
+    document.getElementById('nav-arrived-banner').classList.add('show');
+    speak('You have arrived at ' + S.route.toWp.name);
+    stopGps();
+  }
+}
+
+function navNext() {
+  if (S.navCurStep >= S.navSteps.length - 1) return;
+  S.navCurStep++;
+  speak(S.navSteps[S.navCurStep].instruction);
+  updateNavDisplay();
+}
+function navPrev() {
+  if (S.navCurStep <= 0) return;
+  S.navCurStep--;
+  updateNavDisplay();
+}
+
+// ================================================================
+// GPS
+// ================================================================
+function startGps() {
+  if (!navigator.geolocation) return;
+  S.navGpsWatchId = navigator.geolocation.watchPosition(onGpsPos, onGpsErr, { enableHighAccuracy: true, maximumAge: 3000, timeout: 12000 });
+}
+function stopGps() {
+  if (S.navGpsWatchId !== null) { navigator.geolocation.clearWatch(S.navGpsWatchId); S.navGpsWatchId = null; }
+  S.navGpsPos = null;
+  document.getElementById('nav-gps-ok').style.display = 'none';
+  document.getElementById('nav-gps-off').style.display = 'block';
+}
+function onGpsPos(pos) {
+  const lat = pos.coords.latitude, lng = pos.coords.longitude;
+  S.navGpsPos = { lat, lng };
+  document.getElementById('nav-gps-ok').style.display = 'block';
+  document.getElementById('nav-gps-ok').textContent = `📍 GPS Active (±${Math.round(pos.coords.accuracy || 0)}m)`;
+  document.getElementById('nav-gps-off').style.display = 'none';
+  if (!S.navMap) return;
+  if (!S.navGpsMarker) {
+    S.navGpsPulse = L.marker([lat, lng], { icon: L.divIcon({ html: '<div class="gps-pulse"></div>', iconSize:[38,38], iconAnchor:[19,19], className:'' }), zIndexOffset: 1000 }).addTo(S.navMap);
+    S.navGpsMarker = L.marker([lat, lng], { icon: L.divIcon({ html: '<div class="gps-dot"></div>', iconSize:[14,14], iconAnchor:[7,7], className:'' }), zIndexOffset: 1001 }).addTo(S.navMap);
+  } else {
+    S.navGpsMarker.setLatLng([lat, lng]);
+    S.navGpsPulse.setLatLng([lat, lng]);
+  }
+  if (S.navCenterOnGps) S.navMap.panTo([lat, lng]);
+  // Auto-advance: check distance to end of current road segment
+  if (S.navCurStep < S.navSteps.length - 1) {
+    const step = S.navSteps[S.navCurStep];
+    if (step.geometry) {
+      const endPt = step.geometry[step.geometry.length - 1];
+      if (haversine(lat, lng, endPt[0], endPt[1]) * 1000 < 80) navNext();
+    }
+  }
+}
+function onGpsErr() {}
+function centerOnGps() {
+  if (!S.navGpsPos) return;
+  S.navCenterOnGps = true;
+  S.navMap.setView([S.navGpsPos.lat, S.navGpsPos.lng], 16, { animate: true });
+  setTimeout(() => S.navCenterOnGps = false, 4000);
+}
+
+// ================================================================
+// TTS
+// ================================================================
+function speak(txt) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(txt);
+  u.rate = 0.88; u.pitch = 1; u.volume = 1;
+  window.speechSynthesis.speak(u);
+}
+
+// ================================================================
+// RENDER
+// ================================================================
+function renderAll() {
+  renderWpList();
+  renderRoadList();
+  renderWpMarkers();
+  renderApprovedRoads();
+  refreshRouteSelects();
+}
+
+function renderWpMarkers() {
+  Object.values(S.wMarkers).forEach(m => map.removeLayer(m));
+  S.wMarkers = {};
+  for (const wp of S.waypoints) {
+    const ico = L.divIcon({ html: `<div style="font-size:18px;line-height:1;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.9))">${WP_ICONS[wp.type]||'📍'}</div>`, iconSize:[22,22], iconAnchor:[11,11], className:'' });
+    S.wMarkers[wp.id] = L.marker([wp.lat, wp.lng], { icon: ico }).addTo(map).bindTooltip(`<b>${wp.name}</b>`, { direction: 'top' });
+    S.wMarkers[wp.id].on('click', () => {
+      if (S.mode !== 'employee') return;
+      const f = document.getElementById('rt-from'), t = document.getElementById('rt-to');
+      if (!f.value) f.value = wp.id;
+      else if (!t.value) { t.value = wp.id; clearResult(); }
+    });
+  }
+}
+
+function renderWpList() {
+  const el = document.getElementById('wp-list');
+  if (!S.waypoints.length) { el.innerHTML = '<div class="empty-msg">No locations yet.<br>Use 📍 Place Location tool then click the map.</div>'; return; }
+  el.innerHTML = S.waypoints.map(wp => `
+    <div class="item-card">
+      <div style="font-size:1rem;flex-shrink:0">${WP_ICONS[wp.type]||'📍'}</div>
+      <div class="card-body"><div class="card-name">${wp.name}</div><div class="card-sub">${wp.lat.toFixed(5)}, ${wp.lng.toFixed(5)}</div></div>
+      <div class="card-actions">
+        <button class="btn btn-ghost btn-sm" onclick="flyTo('${wp.id}')">🗺</button>
+        <button class="btn btn-danger btn-sm" onclick="delWp('${wp.id}')">✕</button>
+      </div>
+    </div>`).join('');
+}
+
+function renderRoadList() {
+  const el = document.getElementById('road-list');
+  document.getElementById('road-count').textContent = S.approvedRoads.length + ' roads';
+  if (!S.approvedRoads.length) { el.innerHTML = '<div class="empty-msg">No roads approved yet.<br>Use 📡 Load Roads or ✏️ Draw Custom Road to get started.</div>'; return; }
+  el.innerHTML = S.approvedRoads.map(road => {
+    const c = roadColor(road);
+    return `<div class="item-card">
+      <div class="card-dot" style="background:${c}"></div>
+      <div class="card-body">
+        <div class="card-name">${road.name}${road.oneWay?' ⬆':''}</div>
+        <div class="card-sub" style="color:${c}">${roadDesc(road)}</div>
+        ${road.notes ? `<div class="card-sub" style="color:var(--warning)">⚠ ${road.notes}</div>` : ''}
+      </div>
+      <div class="card-actions">
+        <button class="btn btn-ghost btn-sm" onclick="flyToRoad('${road.id}')">🗺</button>
+        <button class="btn btn-ghost btn-sm" onclick="openClassifyForEdit('${road.id}')">✏️</button>
+        <button class="btn btn-danger btn-sm" onclick="quickDeleteRoad('${road.id}')">✕</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function flyToRoad(id) {
+  const road = S.approvedRoads.find(r => r.id === id);
+  if (road && road.geometry.length) map.fitBounds(road.geometry, { padding: [60, 60], maxZoom: 16 });
+}
+
+function quickDeleteRoad(id) {
+  if (!confirm('Remove this road from approved list?')) return;
+  S.approvedRoads = S.approvedRoads.filter(r => r.id !== id);
+  if (S.approvedLayers[id]) { map.removeLayer(S.approvedLayers[id]); delete S.approvedLayers[id]; }
+  persist(); renderRoadList();
+  loadOsmRoads();
+}
+
+function refreshRouteSelects() {
+  const opts = '<option value="">— Select location —</option>' + S.waypoints.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
+  document.getElementById('rt-from').innerHTML = opts;
+  document.getElementById('rt-to').innerHTML = opts;
+}
+
+// ================================================================
+// STATUS BAR
+// ================================================================
+function setStatus(type, msg) {
+  const colors = { loading:'#3a7abf', ready:'var(--green-bright)', warn:'var(--warning)' };
+  const classes = { loading:'status-loading', ready:'status-ready', warn:'status-warn' };
+  document.getElementById('status-bar-wrap').innerHTML = `
+    <div class="status-bar">
+      <div class="status-dot ${classes[type]}"></div>
+      <span>${msg}</span>
+    </div>`;
+}
+
+// ================================================================
+// UI HELPERS
+// ================================================================
+function setMode(m) {
+  S.mode = m;
+  document.getElementById('panel-admin').style.display = m === 'admin' ? 'block' : 'none';
+  document.getElementById('panel-emp').style.display = m === 'employee' ? 'block' : 'none';
+  document.getElementById('tab-admin').classList.toggle('active', m === 'admin');
+  document.getElementById('tab-emp').classList.toggle('active', m === 'employee');
+  if (m === 'employee') { refreshRouteSelects(); clearResult(); setTool('none'); }
+}
+function setVehicle(v) {
+  S.vehicle = v;
+  document.getElementById('veh-semi').classList.toggle('active', v === 'semi');
+  document.getElementById('veh-tractor').classList.toggle('active', v === 'tractor');
+  document.getElementById('semi-opts').style.display = v === 'semi' ? 'block' : 'none';
+  document.getElementById('tractor-opts').style.display = v === 'tractor' ? 'block' : 'none';
+  clearResult();
+}
+function setLoad(l) { S.load = l; document.getElementById('ls-full').classList.toggle('active', l === 'full'); document.getElementById('ls-empty').classList.toggle('active', l === 'empty'); clearResult(); }
+function setImpl(i) { S.impl = i; ['none','small','large','wide'].forEach(t => document.getElementById('impl-'+t).classList.toggle('active', t === i)); clearResult(); }
+function showHint(txt) { const h = document.getElementById('map-hint'); h.textContent = txt; h.style.display = 'block'; }
+function hideHint() { document.getElementById('map-hint').style.display = 'none'; }
+
+// ================================================================
+// SUPABASE — CONFIG & CLIENT
+// ================================================================
+const SB_URL  = 'https://xnlnqovphvfeunjamwdr.supabase.co';
+const SB_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhubG5xb3ZwaHZmZXVuamFtd2RyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1Mzc5NzgsImV4cCI6MjA5MDExMzk3OH0.XK4OH4MN-tH2nezwprW8IROzBqE0Hy7MyY1_xccynlw';
+const sb      = supabase.createClient(SB_URL, SB_KEY);
+
+let currentUser = null;   // Supabase user object
+let currentRole = null;   // 'admin' | 'employee'
+let currentName = null;   // display name from user_roles
+let realtimeSub = null;   // realtime subscription
+
+// ================================================================
+// AUTH — LOGIN / LOGOUT
+// ================================================================
+async function doLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const pass  = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-err');
+  const btn   = document.getElementById('login-btn');
+  errEl.classList.remove('show');
+  if (!email || !pass) { showLoginErr('Please enter your email and password.'); return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
+    if (error) throw error;
+    await onSignedIn(data.user);
+  } catch(e) {
+    showLoginErr(e.message || 'Sign in failed. Check your email and password.');
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+}
+
+function showLoginErr(msg) {
+  const el = document.getElementById('login-err');
+  el.textContent = msg; el.classList.add('show');
+}
+
+async function doSignOut() {
+  if (!confirm('Sign out?')) return;
+  if (realtimeSub) { sb.removeChannel(realtimeSub); realtimeSub = null; }
+  await sb.auth.signOut();
+  currentUser = null; currentRole = null; currentName = null;
+  document.getElementById('login-screen').classList.remove('hidden');
+  document.getElementById('login-password').value = '';
+  document.getElementById('login-btn').disabled = false;
+  document.getElementById('login-btn').textContent = 'Sign In';
+  document.getElementById('login-err').classList.remove('show');
+}
+
+async function onSignedIn(user) {
+  currentUser = user;
+  // Fetch role
+  const { data: roleRow } = await sb
+    .from('user_roles')
+    .select('role, name')
+    .eq('user_id', user.id)
+    .single();
+
+  currentRole = roleRow?.role || 'employee';
+  currentName = roleRow?.name || user.email;
+
+  // Update user bar
+  document.getElementById('user-bar-name').textContent = currentName;
+  const roleEl = document.getElementById('user-bar-role');
+  roleEl.textContent = currentRole === 'admin' ? '⚙ Admin' : '🚜 Employee';
+  roleEl.className = currentRole === 'admin' ? 'admin' : '';
+
+  // Show/hide admin tab
+  document.getElementById('tab-admin').style.display = currentRole === 'admin' ? '' : 'none';
+
+  // If employee, force to employee tab
+  if (currentRole !== 'admin') setMode('employee');
+
+  // Load data from Supabase
+  await loadData();
+
+  // Hide login, show app
+  document.getElementById('login-screen').classList.add('hidden');
+
+  // Set up realtime sync
+  setupRealtime();
+}
+
+// ================================================================
+// REALTIME SYNC
+// ================================================================
+function setupRealtime() {
+  if (realtimeSub) sb.removeChannel(realtimeSub);
+  realtimeSub = sb
+    .channel('farm_data_changes')
+    .on('postgres_changes',
+      { event: '*', schema: 'public', table: 'farm_data' },
+      (payload) => {
+        // Another device updated the data — reload
+        if (payload.new?.data) {
+          const d = payload.new.data;
+          S.waypoints     = d.waypoints || [];
+          S.approvedRoads = d.approvedRoads || [];
+          renderAll();
+          setSyncDot('ready');
+        }
+      }
+    )
+    .subscribe();
+}
+
+function setSyncDot(state) {
+  const dot = document.getElementById('sync-dot');
+  dot.className = state === 'syncing' ? 'syncing' : state === 'error' ? 'error' : '';
+  dot.title = state === 'syncing' ? 'Saving…' : state === 'error' ? 'Sync error' : 'Synced';
+}
+
+// ================================================================
+// PERSISTENCE — Supabase
+// ================================================================
+async function loadData() {
+  try {
+    const { data, error } = await sb
+      .from('farm_data')
+      .select('data')
+      .eq('id', 1)
+      .single();
+    if (error) throw error;
+    if (data?.data) {
+      S.waypoints     = data.data.waypoints     || [];
+      S.approvedRoads = data.data.approvedRoads || [];
+    }
+  } catch(e) {
+    console.warn('loadData error:', e);
+  }
+}
+
+async function persist() {
+  if (currentRole !== 'admin') return; // only admins can save
+  setSyncDot('syncing');
+  try {
+    const { error } = await sb
+      .from('farm_data')
+      .upsert({ id: 1, data: { waypoints: S.waypoints, approvedRoads: S.approvedRoads } });
+    if (error) throw error;
+    setSyncDot('ready');
+  } catch(e) {
+    setSyncDot('error');
+    console.error('persist error:', e);
+  }
+}
+
+// ================================================================
+// BOOT — check existing session on page load
+// ================================================================
+window.addEventListener('load', async () => {
+  // Init map first (it renders even before login)
+  map = L.map('map', { zoomControl: true }).setView([44.152, -94.005], 13);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution: '© <a href="https://carto.com/">CARTO</a> © <a href="https://openstreetmap.org">OpenStreetMap</a>',
+    subdomains: 'abcd', maxZoom: 19
+  }).addTo(map);
+
+  S.osmRoadLayers   = L.layerGroup().addTo(map);
+  S.routeLayer      = L.layerGroup().addTo(map);
+  S.drawLayer       = L.layerGroup().addTo(map);
+  S.drawPreviewLayer= L.layerGroup().addTo(map);
+  S.segPickLayer    = L.layerGroup().addTo(map);
+
+  map.on('click',     onMapClick);
+  map.on('dblclick',  onMapDblClick);
+  map.on('mousemove', onMapMove);
+  document.addEventListener('keydown', onKey);
+
+  // Add login on Enter key
+  document.getElementById('login-password').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin();
+  });
+  document.getElementById('login-email').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('login-password').focus();
+  });
+
+  // Check if already logged in (persisted session)
+  const { data: { session } } = await sb.auth.getSession();
+  if (session?.user) {
+    await onSignedIn(session.user);
+  }
+  // Otherwise login screen stays visible
+});
+
+// ================================================================
+// SAMPLE DATA
+// ================================================================
+function loadSampleData() {
+  if (!confirm('Load sample farm data? This adds sample locations and pre-approved roads near a demo area.')) return;
+  const bLa = 44.1520, bLn = -94.0050;
+  const sWp = [
+    { id:'sw1', name:'Farm Headquarters', type:'hq', lat:bLa, lng:bLn },
+    { id:'sw2', name:'North Field', type:'field', lat:bLa+0.025, lng:bLn-0.012 },
+    { id:'sw3', name:'South Field', type:'field', lat:bLa-0.022, lng:bLn+0.008 },
+    { id:'sw4', name:'East Field', type:'field', lat:bLa+0.005, lng:bLn+0.038 },
+    { id:'sw5', name:'West Field', type:'field', lat:bLa-0.008, lng:bLn-0.042 },
+    { id:'sw6', name:'County Grain Elevator', type:'elevator', lat:bLa-0.040, lng:bLn-0.022 },
+    { id:'sw7', name:'Shop & Maintenance', type:'shop', lat:bLa+0.003, lng:bLn-0.006 },
+    { id:'sw8', name:'Grain Bins', type:'bin', lat:bLa+0.005, lng:bLn+0.012 }
+  ];
+  const A = (tn,ts,tl,tw,se,sf) => ({ tractorNone:tn, tractorSmall:ts, tractorLarge:tl, tractorWide:tw, semiEmpty:se, semiFull:sf });
+  // Sample roads as actual multi-point geometries
+  const sRoads = [
+    { id:'sr1', name:'Farm Lane Main', osmId:null, permissions:A(1,1,1,1,1,1), oneWay:false, notes:'',
+      geometry:[[bLa,bLn],[bLa+0.002,bLn-0.003],[bLa+0.003,bLn-0.006]] },
+    { id:'sr2', name:'North County Road', osmId:null, permissions:A(1,1,0,0,1,1), oneWay:false, notes:'Low power lines — no tall equipment',
+      geometry:[[bLa,bLn],[bLa+0.005,bLn-0.004],[bLa+0.012,bLn-0.008],[bLa+0.025,bLn-0.012]] },
+    { id:'sr3', name:'South Field Access', osmId:null, permissions:A(1,1,1,1,0,0), oneWay:false, notes:'Soft shoulders — tractors only',
+      geometry:[[bLa,bLn],[bLa-0.006,bLn+0.002],[bLa-0.014,bLn+0.005],[bLa-0.022,bLn+0.008]] },
+    { id:'sr4', name:'East Township Road', osmId:null, permissions:A(1,1,1,0,1,1), oneWay:false, notes:'',
+      geometry:[[bLa,bLn],[bLa+0.001,bLn+0.012],[bLa+0.003,bLn+0.025],[bLa+0.005,bLn+0.038]] },
+    { id:'sr5', name:'West Gravel Road', osmId:null, permissions:A(1,1,1,1,1,0), oneWay:false, notes:'Old bridge — 40 ton limit, no full semis',
+      geometry:[[bLa,bLn],[bLa-0.003,bLn-0.014],[bLa-0.006,bLn-0.028],[bLa-0.008,bLn-0.042]] },
+    { id:'sr6', name:'Hwy 10 — Full Semi To Elevator', osmId:null, permissions:A(0,0,0,0,0,1), oneWay:true, notes:'Full semi route — one-way to elevator',
+      geometry:[[bLa,bLn],[bLa-0.010,bLn-0.006],[bLa-0.025,bLn-0.014],[bLa-0.040,bLn-0.022]] },
+    { id:'sr7', name:'Hwy 10 — Empty Semi Return', osmId:null, permissions:A(0,0,0,0,1,0), oneWay:true, notes:'Empty semi return — one-way',
+      geometry:[[bLa-0.040,bLn-0.022],[bLa-0.028,bLn-0.010],[bLa-0.012,bLn+0.002],[bLa+0.005,bLn+0.012]] },
+    { id:'sr8', name:'Grain Bin to HQ', osmId:null, permissions:A(1,1,1,0,1,1), oneWay:false, notes:'',
+      geometry:[[bLa+0.005,bLn+0.012],[bLa+0.003,bLn+0.006],[bLa,bLn]] }
+  ];
+  const eW = new Set(S.waypoints.map(w => w.id));
+  const eR = new Set(S.approvedRoads.map(r => r.id));
+  sWp.forEach(w => { if (!eW.has(w.id)) S.waypoints.push(w); });
+  sRoads.forEach(r => { if (!eR.has(r.id)) S.approvedRoads.push(r); });
+  persist(); renderAll();
+  const allPts = sWp.map(w => [w.lat, w.lng]);
+  map.fitBounds(allPts, { padding: [50, 50] });
+}
+
+// ================================================================
+// EXPORT / IMPORT
+// ================================================================
+function exportData() {
+  const b = new Blob([JSON.stringify({ waypoints: S.waypoints, approvedRoads: S.approvedRoads }, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'farmroute-data.json'; a.click();
+}
+function importData(e) {
+  const file = e.target.files[0]; if (!file) return;
+  const r = new FileReader();
+  r.onload = ev => {
+    try {
+      const d = JSON.parse(ev.target.result);
+      if (d.waypoints || d.approvedRoads) {
+        S.waypoints = d.waypoints || [];
+        S.approvedRoads = d.approvedRoads || d.segments || [];
+        persist(); renderAll();
+        alert(`Imported ${S.waypoints.length} locations and ${S.approvedRoads.length} roads.`);
+      }
+    } catch { alert('Invalid file format.'); }
+  };
+  r.readAsText(file); e.target.value = '';
+}
+function clearAll() {
+  if (!confirm('Delete ALL locations and approved roads? This will clear data for all users.')) return;
+  S.waypoints = []; S.approvedRoads = [];
+  Object.values(S.approvedLayers).forEach(l => map.removeLayer(l));
+  S.approvedLayers = {};
+  S.routeLayer.clearLayers();
+  S.osmRoadLayers.clearLayers();
+  persist(); renderAll();
+}
+
+// ================================================================
+// JOHN DEERE CSV IMPORT
+// ================================================================
+let jdParsed = { headers: [], rows: [] };
+let jdPreviewResult = [];
+
+function importJohnDeere(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const text = ev.target.result;
+    jdParsed = parseCSV(text);
+    if (jdParsed.headers.length < 2) {
+      alert('Could not read CSV. Make sure it is a comma or tab separated file.');
+      return;
+    }
+    document.getElementById('jd-file-info').textContent =
+      `${file.name}  ·  ${jdParsed.rows.length} rows  ·  ${jdParsed.headers.length} columns`;
+    populateJdSelects();
+    previewJdImport();
+    document.getElementById('jd-modal').style.display = 'flex';
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
+
+function parseCSV(text) {
+  // Detect delimiter: comma or tab
+  const firstLine = text.split('\n')[0];
+  const delim = (firstLine.split('\t').length > firstLine.split(',').length) ? '\t' : ',';
+
+  const lines = text.split('\n').map(l => l.replace(/\r/g, '').trim()).filter(l => l.length > 0);
+  if (lines.length < 2) return { headers: [], rows: [] };
+
+  const parseRow = line => {
+    // Handle quoted fields
+    const result = [];
+    let cur = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQ = !inQ; }
+      else if (ch === delim && !inQ) { result.push(cur.trim()); cur = ''; }
+      else { cur += ch; }
+    }
+    result.push(cur.trim());
+    return result;
+  };
+
+  const headers = parseRow(lines[0]);
+  const rows = lines.slice(1).map(l => {
+    const vals = parseRow(l);
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = vals[i] || ''; });
+    return obj;
+  });
+  return { headers, rows };
+}
+
+function bestMatch(headers, candidates) {
+  for (const c of candidates) {
+    const found = headers.find(h => h.toLowerCase().replace(/\s+/g,'').includes(c.toLowerCase().replace(/\s+/g,'')));
+    if (found) return found;
+  }
+  return headers[0] || '';
+}
+
+function populateJdSelects() {
+  const h = jdParsed.headers;
+  const noneOpt = '<option value="">(none)</option>';
+  const opts = h.map(col => `<option value="${col}">${col}</option>`).join('');
+
+  ['jd-col-farm','jd-col-field','jd-col-lat','jd-col-lng','jd-col-cat'].forEach(id => {
+    document.getElementById(id).innerHTML = noneOpt + opts;
+  });
+
+  // Auto-detect column names matching John Deere's export format
+  document.getElementById('jd-col-farm').value  = bestMatch(h, ['Farm','Organization','Grower']);
+  document.getElementById('jd-col-field').value = bestMatch(h, ['Field','FieldName','Field Name','Name']);
+  document.getElementById('jd-col-lat').value   = bestMatch(h, ['Point Latitude','Latitude','Lat','Y']);
+  document.getElementById('jd-col-lng').value   = bestMatch(h, ['Point Longitude','Longitude','Lng','Long','X']);
+  document.getElementById('jd-col-cat').value   = bestMatch(h, ['Flag Category','Category','Type','Label','FlagCategory']);
+}
+
+function previewJdImport() {
+  const colFarm   = document.getElementById('jd-col-farm').value;
+  const colField  = document.getElementById('jd-col-field').value;
+  const colLat    = document.getElementById('jd-col-lat').value;
+  const colLng    = document.getElementById('jd-col-lng').value;
+  const colCat    = document.getElementById('jd-col-cat').value;
+  const mainLabel = document.getElementById('jd-main-label').value.trim().toLowerCase();
+  const multiEntry= document.getElementById('jd-multi-entry').checked;
+  const prefixFarm= document.getElementById('jd-prefix-farm').checked;
+
+  if (!colField || !colLat || !colLng) {
+    document.getElementById('jd-preview-label').textContent = 'Select Field, Latitude, and Longitude columns above';
+    document.getElementById('jd-preview-list').innerHTML = '';
+    jdPreviewResult = [];
+    return;
+  }
+
+  // Group rows by field
+  const fieldMap = {};
+  for (const row of jdParsed.rows) {
+    const field = (row[colField] || '').trim();
+    const farm  = (row[colFarm]  || '').trim();
+    const lat   = parseFloat(row[colLat]);
+    const lng   = parseFloat(row[colLng]);
+    const cat   = colCat ? (row[colCat] || '').trim().toLowerCase() : '';
+    if (!field || isNaN(lat) || isNaN(lng)) continue;
+    const key = (prefixFarm && farm) ? `${farm} — ${field}` : field;
+    if (!fieldMap[key]) fieldMap[key] = { farm, field, key, entries: [] };
+    fieldMap[key].entries.push({ lat, lng, cat, raw: row });
+  }
+
+  // Decide which entries to keep
+  jdPreviewResult = [];
+  const existingNames = new Set(S.waypoints.map(w => w.name.toLowerCase()));
+
+  for (const [key, data] of Object.entries(fieldMap)) {
+    let toImport = [];
+    if (multiEntry) {
+      // All entries, numbered if more than one
+      if (data.entries.length === 1) {
+        toImport = [{ name: key, ...data.entries[0] }];
+      } else {
+        toImport = data.entries.map((e, i) => ({
+          name: `${key} — ${e.cat || 'Entrance ' + (i+1)}`, ...e
+        }));
+      }
+    } else {
+      // Prefer main entrance label, else first entry
+      const main = data.entries.find(e => e.cat.toLowerCase() === mainLabel)
+                || data.entries.find(e => e.cat.toLowerCase().includes('main'))
+                || data.entries[0];
+      toImport = [{ name: key, ...main }];
+    }
+
+    for (const entry of toImport) {
+      const duplicate = existingNames.has(entry.name.toLowerCase());
+      jdPreviewResult.push({ ...entry, duplicate });
+    }
+  }
+
+  // Render preview
+  const importCount = jdPreviewResult.filter(r => !r.duplicate).length;
+  const dupCount    = jdPreviewResult.filter(r => r.duplicate).length;
+  document.getElementById('jd-preview-label').textContent =
+    `Preview — ${importCount} new locations${dupCount > 0 ? `, ${dupCount} already exist (will skip)` : ''}`;
+  document.getElementById('jd-confirm-btn').textContent = `✓ Import ${importCount} Locations`;
+
+  document.getElementById('jd-preview-list').innerHTML = jdPreviewResult.map(r => `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:${r.duplicate ? 'rgba(80,50,0,0.3)' : 'var(--card-bg)'};border:1px solid ${r.duplicate ? 'var(--warning)' : 'var(--border)'};border-radius:4px;">
+      <div style="font-size:0.95rem;flex-shrink:0">🌱</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:0.78rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.name}</div>
+        <div style="font-size:0.67rem;color:var(--text-muted);font-family:'Courier Prime',monospace;">${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}</div>
+      </div>
+      <div style="font-size:0.67rem;font-family:'Barlow Condensed',sans-serif;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:${r.duplicate ? 'var(--warning)' : 'var(--green-bright)'};">
+        ${r.duplicate ? 'EXISTS' : 'NEW'}
+      </div>
+    </div>`).join('');
+}
+
+function confirmJdImport() {
+  const toAdd = jdPreviewResult.filter(r => !r.duplicate);
+  if (toAdd.length === 0) { alert('No new locations to import.'); return; }
+
+  for (const r of toAdd) {
+    S.waypoints.push({
+      id: 'wp_jd_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+      name: r.name,
+      type: 'field',
+      lat: r.lat,
+      lng: r.lng
+    });
+  }
+
+  persist();
+  renderAll();
+  closeJdModal();
+
+  // Fly to imported points
+  const pts = toAdd.map(r => [r.lat, r.lng]);
+  if (pts.length) map.fitBounds(pts, { padding: [50, 50] });
+
+  setStatus('ready', `✓ Imported ${toAdd.length} field locations from John Deere`);
+}
+
+function closeJdModal() {
+  document.getElementById('jd-modal').style.display = 'none';
+  jdParsed = { headers: [], rows: [] };
+  jdPreviewResult = [];
+}
+</script>
+</body>
+</html>
