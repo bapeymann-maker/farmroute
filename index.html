@@ -395,9 +395,9 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
       <div class="sec-hdr" style="margin-top:2px"><span class="sec-label">🗺 Map Tools</span></div>
       <div class="tool-bar">
         <button class="tool-btn" id="tool-loc" onclick="setTool('location')">📍 Place Location</button>
-        <button class="tool-btn" id="tool-road" onclick="setTool('selectRoad')">🖱 Click Road to Approve</button>
+        <button class="tool-btn" id="tool-road" onclick="setTool('selectRoad')">🖱 Tap Map to Find Roads</button>
         <button class="tool-btn" id="tool-draw" onclick="setTool('drawRoad')">✏️ Draw Custom Road</button>
-        <button class="tool-btn" id="tool-osm" onclick="loadOsmRoads()">📡 Load Roads from Map</button>
+        <button class="tool-btn" id="tool-osm" onclick="loadOsmRoads()">📡 Bulk Load All Roads</button>
       </div>
 
       <div id="status-bar-wrap"></div>
@@ -807,6 +807,9 @@ function onMapClick(e) {
   } else if (S.tool === 'drawRoad') {
     S.drawPoints.push([e.latlng.lat, e.latlng.lng]);
     renderDrawLayer();
+  } else if (S.tool === 'selectRoad') {
+    // Click-to-query: fetch roads near this tap point on demand
+    queryRoadsNearPoint(e.latlng);
   } else if (S.segPickState === 'pickStart' || S.segPickState === 'pickEnd') {
     onSegPickClick(e.latlng);
   }
@@ -865,12 +868,12 @@ function setTool(tool) {
     showHint('📍 Click map to place a named location');
   } else if (tool === 'selectRoad') {
     document.getElementById('tool-road').classList.add('active-blue');
-    map.getContainer().style.cursor = 'pointer';
-    showHint('🖱 Click any gray road on the map to approve it');
+    map.getContainer().style.cursor = 'crosshair';
+    showHint('👆 Tap anywhere on or near a road to load it');
     // On mobile: collapse sidebar so map is fully visible
     if (isMobile() && !sidebarCollapsed) toggleSidebar();
-    // Only auto-load if no roads currently shown
-    if (S.osmRoadLayers.getLayers().length === 0) loadOsmRoads();
+    // Clear stale OSM layers from previous sessions
+    S.osmRoadLayers.clearLayers();
   } else if (tool === 'drawRoad') {
     document.getElementById('tool-draw').classList.add('active-green');
     map.getContainer().style.cursor = 'crosshair';
@@ -912,61 +915,158 @@ function flyTo(id) {
 }
 
 // ================================================================
-// OSM ROAD LOADING
+// OSM ROADS — CLICK-TO-QUERY (fast, on-demand per tap)
 // ================================================================
-async function loadOsmRoads() {
-  const zoom = map.getZoom();
-  if (zoom < 12) {
-    setStatus('warn', 'Zoom in closer first (zoom level 12+) then try again');
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  'https://overpass.openstreetmap.ru/api/interpreter'
+];
+
+let queryInFlight = false;
+let lastQueryPt = null;
+
+async function queryRoadsNearPoint(latlng) {
+  if (queryInFlight) return; // debounce — ignore rapid taps
+  const { lat, lng } = latlng;
+
+  // If user tapped very close to a road already on screen, open classify directly
+  const existing = findNearestOsmLayer(lat, lng, 0.0008); // ~80m
+  if (existing) {
+    openClassifyForOsmRoad(existing);
     return;
   }
 
-  setStatus('loading', 'Loading roads from OpenStreetMap…');
+  queryInFlight = true;
+  lastQueryPt = latlng;
+  setStatus('loading', '⏳ Finding roads near tap…');
+
+  // Small radius query — 400m around the tap point
+  const R = 0.004; // ~400m in degrees
+  const bbox = `${(lat-R).toFixed(5)},${(lng-R).toFixed(5)},${(lat+R).toFixed(5)},${(lng+R).toFixed(5)}`;
+  const query = `[out:json][timeout:8];way["highway"](${bbox});out body;>;out skel qt;`;
+
+  let roads = null;
+  let lastErr = '';
+
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    try {
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'data=' + encodeURIComponent(query),
+        signal: AbortSignal.timeout(9000)
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      roads = parseOverpass(data);
+      break;
+    } catch(e) {
+      lastErr = e.message || String(e);
+    }
+  }
+
+  queryInFlight = false;
+
+  if (!roads) {
+    setStatus('warn', `Could not load roads (${lastErr}) — check connection or use ✏️ Draw Custom Road`);
+    return;
+  }
+
+  if (roads.length === 0) {
+    setStatus('warn', 'No roads found here — try tapping directly on a road line on the map');
+    return;
+  }
+
+  // Add newly loaded roads to layer (skip already approved)
+  const approvedOsmIds = new Set(S.approvedRoads.filter(r=>r.osmId).map(r=>r.osmId));
+  const newRoads = roads.filter(r => !approvedOsmIds.has(r.osmId));
+  renderOsmRoads(newRoads, false); // false = don't clear existing
+
+  // Auto-open the nearest road to the tap
+  const nearest = findNearestRoad(lat, lng, newRoads);
+  if (nearest) {
+    setStatus('ready', `✓ ${newRoads.length} roads found — tap one to classify, or tap elsewhere to find more`);
+    openClassifyForOsmRoad(nearest);
+  } else {
+    setStatus('ready', `✓ ${newRoads.length} roads loaded — tap a road to approve it`);
+  }
+}
+
+// Find nearest already-rendered OSM road layer to a point
+function findNearestOsmLayer(lat, lng, threshold) {
+  let bestRoad = null, bestDist = threshold;
+  S.osmRoadLayers.getLayers().forEach(layer => {
+    if (!layer._roadData) return;
+    const d = minDistToPolyline(lat, lng, layer._roadData.geometry);
+    if (d < bestDist) { bestDist = d; bestRoad = layer._roadData; }
+  });
+  return bestRoad;
+}
+
+// Find nearest road from a list to a lat/lng
+function findNearestRoad(lat, lng, roads) {
+  let best = null, bestD = Infinity;
+  roads.forEach(r => {
+    const d = minDistToPolyline(lat, lng, r.geometry);
+    if (d < bestD) { bestD = d; best = r; }
+  });
+  return best;
+}
+
+// Minimum distance from point to polyline (in degrees, approximate)
+function minDistToPolyline(lat, lng, geometry) {
+  let best = Infinity;
+  for (let i = 0; i < geometry.length - 1; i++) {
+    const res = nearestPtOnSeg([lat, lng], geometry[i], geometry[i+1]);
+    const d = Math.hypot(lat - res.pt[0], lng - res.pt[1]);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+// Legacy "Load Roads from Map" button — now does a viewport query as before
+// but with shorter timeout and smaller area warning
+async function loadOsmRoads() {
+  const zoom = map.getZoom();
+  if (zoom < 14) {
+    setStatus('warn', 'Zoom in closer (zoom 14+) for bulk road load, or just tap the map to find roads instantly');
+    return;
+  }
+
+  setStatus('loading', 'Loading all roads in view…');
   document.getElementById('tool-osm').classList.add('active');
 
   const b = map.getBounds();
   const bbox = `${b.getSouth().toFixed(5)},${b.getWest().toFixed(5)},${b.getNorth().toFixed(5)},${b.getEast().toFixed(5)}`;
-  const query = `[out:json][timeout:25];way["highway"](${bbox});out body;>;out skel qt;`;
-
-  // Try multiple Overpass endpoints in order
-  const endpoints = [
-    'https://overpass-api.de/api/interpreter',
-    'https://overpass.kumi.systems/api/interpreter',
-    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-    'https://overpass.openstreetmap.ru/api/interpreter'
-  ];
+  const query = `[out:json][timeout:12];way["highway"](${bbox});out body;>;out skel qt;`;
 
   let lastErr = '';
-  for (const endpoint of endpoints) {
+  for (const endpoint of OVERPASS_ENDPOINTS) {
     try {
       setStatus('loading', `Trying ${new URL(endpoint).hostname}…`);
       const resp = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'data=' + encodeURIComponent(query),
-        signal: AbortSignal.timeout(20000)
+        signal: AbortSignal.timeout(13000)
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
       const roads = parseOverpass(data);
-      renderOsmRoads(roads);
+      renderOsmRoads(roads, true);
       const count = S.osmRoadLayers.getLayers().length;
-      setStatus('ready', `✓ ${count} roads loaded — click any road to approve it`);
-      if (S.tool !== 'selectRoad') setTool('selectRoad');
+      setStatus('ready', `✓ ${count} roads loaded — tap any road to approve it`);
       document.getElementById('tool-osm').classList.remove('active');
-      return; // success
+      if (S.tool !== 'selectRoad') setTool('selectRoad');
+      return;
     } catch(e) {
       lastErr = e.message || String(e);
-      continue; // try next endpoint
     }
   }
-
-  // All endpoints failed
   document.getElementById('tool-osm').classList.remove('active');
-  setStatus('warn',
-    `Could not load roads (${lastErr}). ` +
-    `Try: 1) Zoom in more  2) Check internet  3) Use ✏️ Draw Custom Road instead`
-  );
+  setStatus('warn', `Bulk load failed — just tap the map instead to find roads instantly`);
 }
 
 function parseOverpass(data) {
@@ -976,33 +1076,40 @@ function parseOverpass(data) {
     osmId: w.id,
     name: w.tags?.name || w.tags?.ref || roadTypeLabel(w.tags?.highway),
     highway: w.tags?.highway || '',
+    maxspeed: w.tags?.maxspeed || '',
     geometry: w.nodes.map(id => nodes[id]).filter(Boolean)
   })).filter(w => w.geometry.length >= 2);
 }
 
 function roadTypeLabel(type) {
-  const m = { motorway:'Motorway', trunk:'Trunk Road', primary:'Primary Road', secondary:'Secondary Road',
-    tertiary:'Tertiary Road', unclassified:'Local Road', residential:'Residential Road',
-    service:'Service Road', track:'Farm Track', road:'Road' };
+  const m = {
+    motorway:'Motorway', trunk:'Trunk Road', primary:'Primary Road',
+    secondary:'Secondary Road', tertiary:'Tertiary Road', unclassified:'Local Road',
+    residential:'Residential Road', service:'Service Road', track:'Farm Track', road:'Road'
+  };
   return m[type] || 'Unnamed Road';
 }
 
-function renderOsmRoads(roads) {
-  S.osmRoadLayers.clearLayers();
+function renderOsmRoads(roads, clearFirst = true) {
+  if (clearFirst) S.osmRoadLayers.clearLayers();
   const approvedOsmIds = new Set(S.approvedRoads.filter(r => r.osmId).map(r => r.osmId));
+  const existingIds = new Set();
+  S.osmRoadLayers.getLayers().forEach(l => { if (l._roadData) existingIds.add(l._roadData.osmId); });
 
   roads.forEach(road => {
-    if (approvedOsmIds.has(road.osmId)) return; // already approved, skip
-    const line = L.polyline(road.geometry, {
-      color: '#777', weight: 3, opacity: 0.55
-    });
-    line.on('click', (e) => {
+    if (approvedOsmIds.has(road.osmId)) return;
+    if (existingIds.has(road.osmId)) return; // already rendered
+    const line = L.polyline(road.geometry, { color:'#6a8aaa', weight:4, opacity:0.7 });
+    line._roadData = road; // store road data on layer for hit-testing
+    line.on('click', e => {
       L.DomEvent.stop(e);
       if (S.tool === 'selectRoad') openClassifyForOsmRoad(road);
     });
-    line.on('mouseover', () => { if (S.tool === 'selectRoad') line.setStyle({ color: '#ffcc44', weight: 5, opacity: 0.9 }); });
-    line.on('mouseout', () => { line.setStyle({ color: '#777', weight: 3, opacity: 0.55 }); });
-    line.bindTooltip(`<b>${road.name}</b><br><small>${road.highway}</small>`, { sticky: true });
+    line.on('mouseover', () => {
+      if (S.tool === 'selectRoad') line.setStyle({ color:'#ffcc44', weight:6, opacity:1 });
+    });
+    line.on('mouseout', () => line.setStyle({ color:'#6a8aaa', weight:4, opacity:0.7 }));
+    line.bindTooltip(`<b>${road.name}</b><br><small>${road.highway}</small>`, { sticky:true });
     S.osmRoadLayers.addLayer(line);
   });
 }
