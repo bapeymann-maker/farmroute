@@ -1770,9 +1770,11 @@ async function onSignedIn(user) {
 
   // Load data from Supabase
   await loadData();
+  renderAll();
 
   // Hide login, show app
   document.getElementById('login-screen').classList.add('hidden');
+  setTimeout(() => map.invalidateSize(), 150);
 
   // Set up realtime sync
   setupRealtime();
