@@ -1817,21 +1817,30 @@ function geomBounds(geom) {
   return {minLat,maxLat,minLng,maxLng};
 }
 
+// Compute distance along a road to the snap point
+function snapDistAlong(snap) {
+  const g = snap.road.geometry;
+  let d = 0;
+  for (let i = 0; i < snap.snapIdx; i++)
+    d += haversine(g[i][0], g[i][1], g[i+1][0], g[i+1][1]);
+  d += haversine(g[snap.snapIdx][0], g[snap.snapIdx][1], snap.snapPt[0], snap.snapPt[1]);
+  return d;
+}
+
 // ================================================================
 // BUILD ROUTING GRAPH — split roads at ALL crossings first
 // ================================================================
-function buildRoutingGraph(allowed) {
+function buildRoutingGraph(allowed, extraSplits = {}) {
   const nodeIndex = buildNodeIndex(allowed);
 
   // Step 1: Find every crossing and record split points per road
-  const splitsByRoad = {}; // roadId → [{dist, key}]
+  const splitsByRoad = {};
   allowed.forEach(r => { splitsByRoad[r.id] = []; });
 
   for (let i = 0; i < allowed.length; i++) {
     for (let j = i+1; j < allowed.length; j++) {
       const rA = allowed[i], rB = allowed[j];
       const bA = geomBounds(rA.geometry), bB = geomBounds(rB.geometry);
-      // Quick bbox rejection
       if (bA.maxLat < bB.minLat-0.001 || bB.maxLat < bA.minLat-0.001) continue;
       if (bA.maxLng < bB.minLng-0.001 || bB.maxLng < bA.minLng-0.001) continue;
 
@@ -1841,17 +1850,19 @@ function buildRoutingGraph(allowed) {
         const dA = distAlongGeom(rA.geometry, c.segA, c.pt);
         const dB = distAlongGeom(rB.geometry, c.segB, c.pt);
         const totA = roadLength(rA), totB = roadLength(rB);
-        // Only add if crossing is meaningfully inside both roads (not right at endpoint)
         if (dA > 0.005 && dA < totA-0.005) splitsByRoad[rA.id].push({ dist:dA, key });
         if (dB > 0.005 && dB < totB-0.005) splitsByRoad[rB.id].push({ dist:dB, key });
       }
     }
   }
 
-  // Step 2: Also split at endpoint merges (nearby endpoints from buildNodeIndex)
-  // Already handled via nodeIndex canonical keys on fk/tk
+  // Step 2: Merge in extra splits (snap nodes for waypoints)
+  for (const [roadId, splits] of Object.entries(extraSplits)) {
+    if (!splitsByRoad[roadId]) splitsByRoad[roadId] = [];
+    splitsByRoad[roadId].push(...splits);
+  }
 
-  // Step 3: Build graph — each road becomes N sub-edges split at crossing points
+  // Step 3: Build graph — each road becomes N sub-edges split at all split points
   const G = {};
 
   for (const road of allowed) {
@@ -1860,23 +1871,20 @@ function buildRoutingGraph(allowed) {
     const fk = resolveNode(nodeIndex, g[0]);
     const tk = resolveNode(nodeIndex, g[g.length-1]);
 
-    // Sort splits by distance, deduplicate
     const splits = splitsByRoad[road.id]
       .sort((a,b) => a.dist - b.dist)
       .filter((s,i,arr) => {
-        if (s.dist < 0.005 || s.dist > total-0.005) return false; // too close to endpoint
-        if (i > 0 && s.dist - arr[i-1].dist < 0.005) return false; // duplicate
+        if (s.dist < 0.005 || s.dist > total-0.005) return false;
+        if (i > 0 && s.dist - arr[i-1].dist < 0.005) return false;
         return true;
       });
 
-    // Node sequence: road start → [crossing nodes in order] → road end
     const nodes = [
       { key: fk, dist: 0 },
       ...splits.map(s => ({ key: s.key, dist: s.dist })),
       { key: tk, dist: total }
     ];
 
-    // Add one directed edge per consecutive pair
     for (let k = 0; k < nodes.length-1; k++) {
       const fromK = nodes[k].key;
       const toK   = nodes[k+1].key;
@@ -1905,28 +1913,40 @@ function findRoute() {
   const allowed = S.approvedRoads.filter(r => isRoadAllowed(r, v, c));
   if (allowed.length === 0) return showErr('No approved roads for this vehicle/load type.<br>Go to Admin Setup and approve some roads first.');
 
-  // Build graph with roads properly split at all intersections
-  const { G, nodeIndex } = buildRoutingGraph(allowed);
-
   const fromWp = S.waypoints.find(w => w.id === fromId);
   const toWp   = S.waypoints.find(w => w.id === toId);
 
-  // Snap waypoints to nearest point on any approved road
+  // Snap waypoints to nearest point on any approved road FIRST
   const fromSnap = snapWaypointToRoads(fromWp.lat, fromWp.lng, allowed);
   const toSnap   = snapWaypointToRoads(toWp.lat,   toWp.lng,   allowed);
 
   if (!fromSnap || fromSnap.dist > 10)
-    return showErr(`"${fromWp.name}" is more than 10km from any approved road.<br>Check that roads are approved near this location.`);
+    return showErr(`"${fromWp.name}" is more than 10km from any approved road.`);
   if (!toSnap || toSnap.dist > 10)
-    return showErr(`"${toWp.name}" is more than 10km from any approved road.<br>Check that roads are approved near this destination.`);
+    return showErr(`"${toWp.name}" is more than 10km from any approved road.`);
 
-  // Inject waypoint snap nodes into the graph
-  injectSnapNode(G, fromSnap, nodeIndex);
-  injectSnapNode(G, toSnap,   nodeIndex);
+  // Compute snap distances along their roads
+  const fromD = snapDistAlong(fromSnap);
+  const toD   = snapDistAlong(toSnap);
+
+  // Build graph with snap nodes included as splits so they connect properly
+  const extraSplits = {};
+  const addExtra = (snap, d) => {
+    const id = snap.road.id;
+    if (!extraSplits[id]) extraSplits[id] = [];
+    extraSplits[id].push({ key: snap.key, dist: d });
+  };
+  addExtra(fromSnap, fromD);
+  addExtra(toSnap,   toD);
+
+  const { G, nodeIndex } = buildRoutingGraph(allowed, extraSplits);
 
   const startKey = fromSnap.key;
   const endKey   = toSnap.key;
   const allNodes = Object.keys(G);
+
+  if (!allNodes.includes(startKey)) return showErr(`Could not connect "${fromWp.name}" to the road network.`);
+  if (!allNodes.includes(endKey))   return showErr(`Could not connect "${toWp.name}" to the road network.`);
 
   // Dijkstra
   const dist = {}, prev = {}, vis = new Set();
@@ -1955,16 +1975,14 @@ function findRoute() {
     return showErr(
       `No connected route between these points.<br>` +
       `${allowed.length} road${allowed.length!==1?'s':''} approved — ` +
-      `<b>Debug mode on:</b> each color = a separate cluster. ` +
-      `Zoom in where clusters meet to find the gap.`
+      `<b>Debug mode on:</b> each color = a separate cluster.`
     );
   }
 
   const roadSegs = [];
   let cur = endKey;
   while (prev[cur]) { roadSegs.unshift({ roadId:prev[cur].roadId, fwd:prev[cur].fwd, sd:prev[cur].sd, ed:prev[cur].ed }); cur = prev[cur].from; }
-  // Deduplicate consecutive same-road+direction+range segments
-  const dedupedSegs = roadSegs.filter((s,i) => i===0 || s.roadId!==roadSegs[i-1].roadId || s.sd!==roadSegs[i-1].sd);
+  const dedupedSegs = roadSegs.filter((s,i) => i===0 || s.roadId!==roadSegs[i-1].roadId || Math.abs((s.sd||0)-(roadSegs[i-1].sd||0)) > 0.001);
 
   S.route = { roadSegs:dedupedSegs, roadIds:dedupedSegs.map(s=>s.roadId), fromWp, toWp, km:dist[endKey] };
   drawRouteOnMap(S.route);
