@@ -1716,21 +1716,22 @@ function injectSnapNode(G, snap, nodeIndex) {
   const snapKey = snap.key;
   const fk = resolveNode(nodeIndex, g[0]);
   const tk = resolveNode(nodeIndex, g[g.length - 1]);
+  const total = roadLength(road);
 
   let dToSnap = 0;
   for (let i = 0; i < snap.snapIdx; i++)
     dToSnap += haversine(g[i][0], g[i][1], g[i+1][0], g[i+1][1]);
   dToSnap += haversine(g[snap.snapIdx][0], g[snap.snapIdx][1], snap.snapPt[0], snap.snapPt[1]);
-  const dFromSnap = Math.max(0.0001, roadLength(road) - dToSnap);
+  const dFromSnap = Math.max(0.0001, total - dToSnap);
 
   if (!G[snapKey]) G[snapKey] = [];
-  G[snapKey].push({ to: tk, roadId: road.id, dist: dFromSnap, fwd: true });
-  if (!road.oneWay) G[snapKey].push({ to: fk, roadId: road.id, dist: dToSnap, fwd: false });
+  G[snapKey].push({ to: tk, roadId: road.id, dist: dFromSnap, fwd: true,  sd: dToSnap, ed: total });
+  if (!road.oneWay) G[snapKey].push({ to: fk, roadId: road.id, dist: dToSnap,   fwd: false, sd: dToSnap, ed: total });
   if (!G[fk]) G[fk] = [];
-  G[fk].push({ to: snapKey, roadId: road.id, dist: dToSnap, fwd: true });
+  G[fk].push({ to: snapKey, roadId: road.id, dist: dToSnap,   fwd: true,  sd: 0, ed: dToSnap });
   if (!road.oneWay) {
     if (!G[tk]) G[tk] = [];
-    G[tk].push({ to: snapKey, roadId: road.id, dist: dFromSnap, fwd: false });
+    G[tk].push({ to: snapKey, roadId: road.id, dist: dFromSnap, fwd: false, sd: dToSnap, ed: total });
   }
 }
 
@@ -1882,11 +1883,11 @@ function buildRoutingGraph(allowed) {
       const d = Math.max(0.0001, nodes[k+1].dist - nodes[k].dist);
 
       if (!G[fromK]) G[fromK] = [];
-      G[fromK].push({ to:toK, roadId:road.id, dist:d, fwd:true });
+      G[fromK].push({ to:toK, roadId:road.id, dist:d, fwd:true, sd:nodes[k].dist, ed:nodes[k+1].dist });
 
       if (!road.oneWay) {
         if (!G[toK]) G[toK] = [];
-        G[toK].push({ to:fromK, roadId:road.id, dist:d, fwd:false });
+        G[toK].push({ to:fromK, roadId:road.id, dist:d, fwd:false, sd:nodes[k].dist, ed:nodes[k+1].dist });
       }
     }
   }
@@ -1942,7 +1943,7 @@ function findRoute() {
       const nd = dist[cur]+e.dist;
       if (nd < dist[e.to]) {
         dist[e.to] = nd;
-        prev[e.to] = { from:cur, roadId:e.roadId, fwd:e.fwd };
+        prev[e.to] = { from:cur, roadId:e.roadId, fwd:e.fwd, sd:e.sd, ed:e.ed };
         pq.push({ id:e.to, d:nd });
       }
     }
@@ -1959,12 +1960,11 @@ function findRoute() {
     );
   }
 
-  // Reconstruct path — store roadId + travel direction
   const roadSegs = [];
   let cur = endKey;
-  while (prev[cur]) { roadSegs.unshift({ roadId:prev[cur].roadId, fwd:prev[cur].fwd }); cur = prev[cur].from; }
-  // Deduplicate consecutive same-road segments
-  const dedupedSegs = roadSegs.filter((s,i) => i===0 || s.roadId!==roadSegs[i-1].roadId);
+  while (prev[cur]) { roadSegs.unshift({ roadId:prev[cur].roadId, fwd:prev[cur].fwd, sd:prev[cur].sd, ed:prev[cur].ed }); cur = prev[cur].from; }
+  // Deduplicate consecutive same-road+direction+range segments
+  const dedupedSegs = roadSegs.filter((s,i) => i===0 || s.roadId!==roadSegs[i-1].roadId || s.sd!==roadSegs[i-1].sd);
 
   S.route = { roadSegs:dedupedSegs, roadIds:dedupedSegs.map(s=>s.roadId), fromWp, toWp, km:dist[endKey] };
   drawRouteOnMap(S.route);
@@ -1972,20 +1972,57 @@ function findRoute() {
   document.getElementById('start-nav-btn').style.display = 'flex';
 }
 
+// Extract the sub-geometry of a road between two distances along it
+function geomSlice(geom, startDist, endDist) {
+  const pts = [];
+  let d = 0;
+  for (let i = 0; i < geom.length - 1; i++) {
+    const segLen = haversine(geom[i][0], geom[i][1], geom[i+1][0], geom[i+1][1]);
+    const segStart = d, segEnd = d + segLen;
+
+    if (segEnd < startDist - 0.0001) { d += segLen; continue; }
+    if (segStart > endDist + 0.0001) break;
+
+    // Interpolate start point if this segment crosses startDist
+    if (pts.length === 0) {
+      const t = segLen > 0 ? Math.max(0, (startDist - segStart) / segLen) : 0;
+      pts.push([geom[i][0] + t*(geom[i+1][0]-geom[i][0]), geom[i][1] + t*(geom[i+1][1]-geom[i][1])]);
+    }
+
+    // Add segment endpoint if it's before endDist
+    if (segEnd <= endDist + 0.0001) {
+      pts.push([...geom[i+1]]);
+    } else {
+      // Interpolate end point
+      const t = segLen > 0 ? Math.max(0, (endDist - segStart) / segLen) : 1;
+      pts.push([geom[i][0] + t*(geom[i+1][0]-geom[i][0]), geom[i][1] + t*(geom[i+1][1]-geom[i][1])]);
+      break;
+    }
+    d += segLen;
+  }
+  return pts.length >= 2 ? pts : geom; // fallback to full geom if slice failed
+}
+
+function segGeom(seg) {
+  const road = S.approvedRoads.find(r => r.id === seg.roadId);
+  if (!road) return [];
+  const sd = seg.sd ?? 0;
+  const ed = seg.ed ?? roadLength(road);
+  const sliced = geomSlice(road.geometry, sd, ed);
+  return seg.fwd === false ? [...sliced].reverse() : sliced;
+}
+
 function drawRouteOnMap(route) {
   S.routeLayer.clearLayers();
-  for (const rid of route.roadIds) {
-    const road = S.approvedRoads.find(r => r.id === rid);
-    if (!road) continue;
-    L.polyline(road.geometry, { color: '#e84040', weight: 12, opacity: 0.4 }).addTo(S.routeLayer);
-    L.polyline(road.geometry, { color: '#ff5555', weight: 4, opacity: 1 }).addTo(S.routeLayer);
+  const segs = route.roadSegs || route.roadIds.map(id => ({ roadId:id, fwd:true }));
+  for (const seg of segs) {
+    const geom = segGeom(seg);
+    if (!geom.length) continue;
+    L.polyline(geom, { color:'#e84040', weight:12, opacity:0.4 }).addTo(S.routeLayer);
+    L.polyline(geom, { color:'#ff5555', weight:4, opacity:1 }).addTo(S.routeLayer);
   }
-  // Fit bounds to route
-  const allPts = route.roadIds.flatMap(rid => {
-    const r = S.approvedRoads.find(x => x.id === rid);
-    return r ? r.geometry : [];
-  });
-  if (allPts.length) map.fitBounds(allPts, { padding: [50, 50] });
+  const allPts = segs.flatMap(seg => segGeom(seg));
+  if (allPts.length) map.fitBounds(allPts, { padding:[50,50] });
 }
 
 // ================================================================
@@ -1998,31 +2035,31 @@ function buildNavSteps(route) {
     route.roadIds.map(id => ({ roadId: id, fwd: true }));
 
   for (let i = 0; i < segs.length; i++) {
-    const { roadId, fwd } = segs[i];
+    const { roadId, fwd, sd, ed } = segs[i];
     const road = S.approvedRoads.find(r => r.id === roadId);
     if (!road) continue;
 
-    const g = fwd ? road.geometry : [...road.geometry].reverse();
-    // Departure bearing: direction we leave this road's start point
+    // Use actual driven sub-geometry (sliced between sd and ed, reversed if fwd=false)
+    const g = segGeom(segs[i]);
+    if (g.length < 2) continue;
+
     const departBear = bearing(g[0][0], g[0][1], g[1][0], g[1][1]);
 
     let turn;
     if (i === 0) {
       turn = { arrow: '⬆', text: 'Head ' + compassDir(departBear) };
     } else {
-      // Approach bearing: direction we were travelling at end of previous road
-      const prevSeg = segs[i-1];
-      const prevRoad = S.approvedRoads.find(r => r.id === prevSeg.roadId);
-      const pg = prevSeg.fwd ? prevRoad.geometry : [...prevRoad.geometry].reverse();
+      const pg = segGeom(segs[i-1]);
       const approachBear = bearing(pg[pg.length-2][0], pg[pg.length-2][1], pg[pg.length-1][0], pg[pg.length-1][1]);
       turn = turnInfo(approachBear, departBear);
     }
 
+    const drivenDist = Math.max(0.0001, (ed ?? roadLength(road)) - (sd ?? 0));
     steps.push({
       type: 'step',
       roadId: road.id,
       roadName: road.name,
-      distKm: roadLength(road),
+      distKm: drivenDist,
       arrow: turn.arrow,
       instruction: `${turn.text} onto ${road.name}`,
       notes: road.notes || '',
