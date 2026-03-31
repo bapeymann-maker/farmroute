@@ -1776,33 +1776,29 @@ function resolveNode(nodeIndex, pt) {
 // ================================================================
 // LINE SEGMENT INTERSECTION DETECTION
 // ================================================================
-
-// Do segments (p1→p2) and (p3→p4) intersect? Returns intersection point or null.
 function segmentsIntersect(p1, p2, p3, p4) {
   const d1 = [p2[0]-p1[0], p2[1]-p1[1]];
   const d2 = [p4[0]-p3[0], p4[1]-p3[1]];
   const cross = d1[0]*d2[1] - d1[1]*d2[0];
-  if (Math.abs(cross) < 1e-12) return null; // parallel
+  if (Math.abs(cross) < 1e-12) return null;
   const dx = p3[0]-p1[0], dy = p3[1]-p1[1];
   const t = (dx*d2[1] - dy*d2[0]) / cross;
   const u = (dx*d1[1] - dy*d1[0]) / cross;
   if (t < 0 || t > 1 || u < 0 || u > 1) return null;
-  return [p1[0] + t*d1[0], p1[1] + t*d1[1]];
+  return { pt:[p1[0]+t*d1[0], p1[1]+t*d1[1]], t, u };
 }
 
-// Find all crossing points between two road geometries
 function findCrossings(geomA, geomB) {
   const crossings = [];
-  for (let i = 0; i < geomA.length - 1; i++) {
-    for (let j = 0; j < geomB.length - 1; j++) {
-      const pt = segmentsIntersect(geomA[i], geomA[i+1], geomB[j], geomB[j+1]);
-      if (pt) crossings.push({ pt, segA: i, segB: j });
+  for (let i = 0; i < geomA.length-1; i++) {
+    for (let j = 0; j < geomB.length-1; j++) {
+      const r = segmentsIntersect(geomA[i], geomA[i+1], geomB[j], geomB[j+1]);
+      if (r) crossings.push({ pt:r.pt, segA:i, segB:j });
     }
   }
   return crossings;
 }
 
-// Split a road geometry at a crossing point and return dist-to-crossing from start
 function distAlongGeom(geom, segIdx, pt) {
   let d = 0;
   for (let i = 0; i < segIdx; i++)
@@ -1811,36 +1807,91 @@ function distAlongGeom(geom, segIdx, pt) {
   return d;
 }
 
-// Inject a crossing point as a virtual node connecting two roads in the graph
-function injectCrossingNode(G, crossKey, roadA, roadB, dToA, dToB) {
-  const totalA = roadLength(roadA);
-  const totalB = roadLength(roadB);
-  const fkA = nodeKey(roadA.geometry[0]);
-  const tkA = nodeKey(roadA.geometry[roadA.geometry.length-1]);
-  const fkB = nodeKey(roadB.geometry[0]);
-  const tkB = nodeKey(roadB.geometry[roadB.geometry.length-1]);
+function geomBounds(geom) {
+  let minLat=Infinity, maxLat=-Infinity, minLng=Infinity, maxLng=-Infinity;
+  for (const [la,lo] of geom) {
+    if (la<minLat) minLat=la; if (la>maxLat) maxLat=la;
+    if (lo<minLng) minLng=lo; if (lo>maxLng) maxLng=lo;
+  }
+  return {minLat,maxLat,minLng,maxLng};
+}
 
-  if (!G[crossKey]) G[crossKey] = [];
+// ================================================================
+// BUILD ROUTING GRAPH — split roads at ALL crossings first
+// ================================================================
+function buildRoutingGraph(allowed) {
+  const nodeIndex = buildNodeIndex(allowed);
 
-  // Road A: fkA ←→ crossKey ←→ tkA
-  G[crossKey].push({ to: tkA, roadId: roadA.id, dist: Math.max(0.0001, totalA - dToA) });
-  if (!roadA.oneWay) G[crossKey].push({ to: fkA, roadId: roadA.id, dist: Math.max(0.0001, dToA) });
-  if (!G[fkA]) G[fkA] = [];
-  G[fkA].push({ to: crossKey, roadId: roadA.id, dist: Math.max(0.0001, dToA) });
-  if (!roadA.oneWay) {
-    if (!G[tkA]) G[tkA] = [];
-    G[tkA].push({ to: crossKey, roadId: roadA.id, dist: Math.max(0.0001, totalA - dToA) });
+  // Step 1: Find every crossing and record split points per road
+  const splitsByRoad = {}; // roadId → [{dist, key}]
+  allowed.forEach(r => { splitsByRoad[r.id] = []; });
+
+  for (let i = 0; i < allowed.length; i++) {
+    for (let j = i+1; j < allowed.length; j++) {
+      const rA = allowed[i], rB = allowed[j];
+      const bA = geomBounds(rA.geometry), bB = geomBounds(rB.geometry);
+      // Quick bbox rejection
+      if (bA.maxLat < bB.minLat-0.001 || bB.maxLat < bA.minLat-0.001) continue;
+      if (bA.maxLng < bB.minLng-0.001 || bB.maxLng < bA.minLng-0.001) continue;
+
+      const crossings = findCrossings(rA.geometry, rB.geometry);
+      for (const c of crossings) {
+        const key = `x_${c.pt[0].toFixed(5)}_${c.pt[1].toFixed(5)}`;
+        const dA = distAlongGeom(rA.geometry, c.segA, c.pt);
+        const dB = distAlongGeom(rB.geometry, c.segB, c.pt);
+        const totA = roadLength(rA), totB = roadLength(rB);
+        // Only add if crossing is meaningfully inside both roads (not right at endpoint)
+        if (dA > 0.005 && dA < totA-0.005) splitsByRoad[rA.id].push({ dist:dA, key });
+        if (dB > 0.005 && dB < totB-0.005) splitsByRoad[rB.id].push({ dist:dB, key });
+      }
+    }
   }
 
-  // Road B: fkB ←→ crossKey ←→ tkB
-  G[crossKey].push({ to: tkB, roadId: roadB.id, dist: Math.max(0.0001, totalB - dToB) });
-  if (!roadB.oneWay) G[crossKey].push({ to: fkB, roadId: roadB.id, dist: Math.max(0.0001, dToB) });
-  if (!G[fkB]) G[fkB] = [];
-  G[fkB].push({ to: crossKey, roadId: roadB.id, dist: Math.max(0.0001, dToB) });
-  if (!roadB.oneWay) {
-    if (!G[tkB]) G[tkB] = [];
-    G[tkB].push({ to: crossKey, roadId: roadB.id, dist: Math.max(0.0001, totalB - dToB) });
+  // Step 2: Also split at endpoint merges (nearby endpoints from buildNodeIndex)
+  // Already handled via nodeIndex canonical keys on fk/tk
+
+  // Step 3: Build graph — each road becomes N sub-edges split at crossing points
+  const G = {};
+
+  for (const road of allowed) {
+    const g = road.geometry;
+    const total = roadLength(road);
+    const fk = resolveNode(nodeIndex, g[0]);
+    const tk = resolveNode(nodeIndex, g[g.length-1]);
+
+    // Sort splits by distance, deduplicate
+    const splits = splitsByRoad[road.id]
+      .sort((a,b) => a.dist - b.dist)
+      .filter((s,i,arr) => {
+        if (s.dist < 0.005 || s.dist > total-0.005) return false; // too close to endpoint
+        if (i > 0 && s.dist - arr[i-1].dist < 0.005) return false; // duplicate
+        return true;
+      });
+
+    // Node sequence: road start → [crossing nodes in order] → road end
+    const nodes = [
+      { key: fk, dist: 0 },
+      ...splits.map(s => ({ key: s.key, dist: s.dist })),
+      { key: tk, dist: total }
+    ];
+
+    // Add one directed edge per consecutive pair
+    for (let k = 0; k < nodes.length-1; k++) {
+      const fromK = nodes[k].key;
+      const toK   = nodes[k+1].key;
+      const d = Math.max(0.0001, nodes[k+1].dist - nodes[k].dist);
+
+      if (!G[fromK]) G[fromK] = [];
+      G[fromK].push({ to:toK, roadId:road.id, dist:d });
+
+      if (!road.oneWay) {
+        if (!G[toK]) G[toK] = [];
+        G[toK].push({ to:fromK, roadId:road.id, dist:d });
+      }
+    }
   }
+
+  return { G, nodeIndex };
 }
 
 function findRoute() {
@@ -1853,48 +1904,8 @@ function findRoute() {
   const allowed = S.approvedRoads.filter(r => isRoadAllowed(r, v, c));
   if (allowed.length === 0) return showErr('No approved roads for this vehicle/load type.<br>Go to Admin Setup and approve some roads first.');
 
-  // Build node index with tolerance merging so nearby endpoints connect
-  const nodeIndex = buildNodeIndex(allowed);
-
-  // Build base graph using canonical node keys
-  const G = {};
-  for (const road of allowed) {
-    const g  = road.geometry;
-    const fk = resolveNode(nodeIndex, g[0]);
-    const tk = resolveNode(nodeIndex, g[g.length - 1]);
-    const d  = roadLength(road);
-    if (fk === tk && d < 0.01) continue;
-    if (!G[fk]) G[fk] = [];
-    G[fk].push({ to: tk, roadId: road.id, dist: d });
-    if (!road.oneWay) {
-      if (!G[tk]) G[tk] = [];
-      G[tk].push({ to: fk, roadId: road.id, dist: d });
-    }
-  }
-
-  // Detect road crossings and inject virtual intersection nodes
-  // This handles roads that cross in the middle without shared endpoints
-  const crossingKeys = new Set();
-  for (let i = 0; i < allowed.length; i++) {
-    for (let j = i + 1; j < allowed.length; j++) {
-      const rA = allowed[i], rB = allowed[j];
-      // Quick bbox check to skip non-overlapping roads
-      const boundsA = geomBounds(rA.geometry);
-      const boundsB = geomBounds(rB.geometry);
-      if (boundsA.maxLat < boundsB.minLat - 0.001 || boundsB.maxLat < boundsA.minLat - 0.001) continue;
-      if (boundsA.maxLng < boundsB.minLng - 0.001 || boundsB.maxLng < boundsA.minLng - 0.001) continue;
-
-      const crossings = findCrossings(rA.geometry, rB.geometry);
-      for (const cross of crossings) {
-        const crossKey = `cross_${cross.pt[0].toFixed(6)}_${cross.pt[1].toFixed(6)}`;
-        if (crossingKeys.has(crossKey)) continue;
-        crossingKeys.add(crossKey);
-        const dA = distAlongGeom(rA.geometry, cross.segA, cross.pt);
-        const dB = distAlongGeom(rB.geometry, cross.segB, cross.pt);
-        injectCrossingNode(G, crossKey, rA, rB, dA, dB);
-      }
-    }
-  }
+  // Build graph with roads properly split at all intersections
+  const { G, nodeIndex } = buildRoutingGraph(allowed);
 
   const fromWp = S.waypoints.find(w => w.id === fromId);
   const toWp   = S.waypoints.find(w => w.id === toId);
@@ -1908,7 +1919,7 @@ function findRoute() {
   if (!toSnap || toSnap.dist > 10)
     return showErr(`"${toWp.name}" is more than 10km from any approved road.<br>Check that roads are approved near this destination.`);
 
-  // Inject snap points as virtual entry nodes
+  // Inject waypoint snap nodes into the graph
   injectSnapNode(G, fromSnap, nodeIndex);
   injectSnapNode(G, toSnap,   nodeIndex);
 
@@ -1920,55 +1931,44 @@ function findRoute() {
   const dist = {}, prev = {}, vis = new Set();
   allNodes.forEach(n => dist[n] = Infinity);
   dist[startKey] = 0;
-  const pq = [{ id: startKey, d: 0 }];
+  const pq = [{ id:startKey, d:0 }];
   while (pq.length) {
-    pq.sort((a, b) => a.d - b.d);
-    const { id: cur } = pq.shift();
+    pq.sort((a,b) => a.d - b.d);
+    const { id:cur } = pq.shift();
     if (vis.has(cur)) continue;
     vis.add(cur);
     if (cur === endKey) break;
-    for (const e of (G[cur] || [])) {
-      const nd = dist[cur] + e.dist;
+    for (const e of (G[cur]||[])) {
+      const nd = dist[cur]+e.dist;
       if (nd < dist[e.to]) {
         dist[e.to] = nd;
-        prev[e.to] = { from: cur, roadId: e.roadId };
-        pq.push({ id: e.to, d: nd });
+        prev[e.to] = { from:cur, roadId:e.roadId };
+        pq.push({ id:e.to, d:nd });
       }
     }
   }
 
   if (!isFinite(dist[endKey])) {
-    const totalRoads = allowed.length;
     if (!debugMode) toggleDebugMode();
     renderDebugNetwork(fromWp.lat, fromWp.lng);
     return showErr(
       `No connected route between these points.<br>` +
-      `${totalRoads} road${totalRoads !== 1 ? 's' : ''} approved — ` +
+      `${allowed.length} road${allowed.length!==1?'s':''} approved — ` +
       `<b>Debug mode on:</b> each color = a separate cluster. ` +
-      `Zoom in where clusters meet to find the gap and approve a connecting road.`
+      `Zoom in where clusters meet to find the gap.`
     );
   }
 
-  // Reconstruct and deduplicate
+  // Reconstruct path
   const roadIds = [];
   let cur = endKey;
   while (prev[cur]) { roadIds.unshift(prev[cur].roadId); cur = prev[cur].from; }
-  const dedupedIds = roadIds.filter((id, i) => i === 0 || id !== roadIds[i-1]);
+  const dedupedIds = roadIds.filter((id,i) => i===0 || id!==roadIds[i-1]);
 
-  S.route = { roadIds: dedupedIds, fromWp, toWp, km: dist[endKey] };
+  S.route = { roadIds:dedupedIds, fromWp, toWp, km:dist[endKey] };
   drawRouteOnMap(S.route);
   showRouteResult(S.route);
   document.getElementById('start-nav-btn').style.display = 'flex';
-}
-
-// Bounding box of a geometry for fast rejection
-function geomBounds(geom) {
-  let minLat=Infinity, maxLat=-Infinity, minLng=Infinity, maxLng=-Infinity;
-  for (const [la, lo] of geom) {
-    if (la < minLat) minLat = la; if (la > maxLat) maxLat = la;
-    if (lo < minLng) minLng = lo; if (lo > maxLng) maxLng = lo;
-  }
-  return { minLat, maxLat, minLng, maxLng };
 }
 
 function drawRouteOnMap(route) {
