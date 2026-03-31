@@ -1924,6 +1924,42 @@ function buildRoutingGraph(allowed, extraSplits = {}) {
     }
   }
 
+  // Post-process: add bridge edges between graph nodes within 150m
+  // This fixes T-intersections where a crossing falls within 5m of a road endpoint
+  // and gets filtered from splits, leaving the endpoint disconnected from the crossing node
+  const nodeCoords = {};
+  for (const k of Object.keys(G)) {
+    let la, lo;
+    if (k.startsWith('x_')) {
+      const p = k.slice(2).split('_'); la = parseFloat(p[0]); lo = parseFloat(p[1]);
+    } else if (k.startsWith('snap_')) {
+      const p = k.slice(5).split('_'); la = parseFloat(p[0]); lo = parseFloat(p[1]);
+    } else if (k.includes(',')) {
+      const p = k.split(','); la = parseFloat(p[0]); lo = parseFloat(p[1]);
+    }
+    if (la !== undefined && !isNaN(la) && !isNaN(lo)) nodeCoords[k] = [la, lo];
+  }
+
+  const nkeys = Object.keys(nodeCoords);
+  for (let i = 0; i < nkeys.length; i++) {
+    for (let j = i+1; j < nkeys.length; j++) {
+      const [la1,lo1] = nodeCoords[nkeys[i]];
+      const [la2,lo2] = nodeCoords[nkeys[j]];
+      if (Math.abs(la1-la2) > 0.002) continue; // fast reject
+      const d = haversine(la1,lo1,la2,lo2);
+      if (d < 0.15) { // within 150m — add bidirectional bridge
+        const bd = Math.max(0.0001, d);
+        if (!G[nkeys[i]]) G[nkeys[i]] = [];
+        if (!G[nkeys[j]]) G[nkeys[j]] = [];
+        // Only add if not already directly connected
+        if (!G[nkeys[i]].some(e => e.to === nkeys[j])) {
+          G[nkeys[i]].push({ to:nkeys[j], roadId:null, dist:bd, fwd:true, sd:0, ed:0 });
+          G[nkeys[j]].push({ to:nkeys[i], roadId:null, dist:bd, fwd:true, sd:0, ed:0 });
+        }
+      }
+    }
+  }
+
   return { G, nodeIndex };
 }
 
@@ -2057,7 +2093,7 @@ function findRoute() {
   const roadSegs = [];
   let cur = endKey;
   while (prev[cur]) { roadSegs.unshift({ roadId:prev[cur].roadId, fwd:prev[cur].fwd, sd:prev[cur].sd, ed:prev[cur].ed }); cur = prev[cur].from; }
-  const dedupedSegs = roadSegs.filter((s,i) => i===0 || s.roadId!==roadSegs[i-1].roadId || Math.abs((s.sd||0)-(roadSegs[i-1].sd||0)) > 0.001);
+  const dedupedSegs = roadSegs.filter((s,i) => !s.roadId || i===0 || s.roadId!==roadSegs[i-1].roadId || Math.abs((s.sd||0)-(roadSegs[i-1].sd||0)) > 0.001);
 
   S.route = { roadSegs:dedupedSegs, roadIds:dedupedSegs.map(s=>s.roadId), fromWp, toWp, km:dist[endKey] };
   drawRouteOnMap(S.route);
@@ -2109,6 +2145,7 @@ function drawRouteOnMap(route) {
   S.routeLayer.clearLayers();
   const segs = route.roadSegs || route.roadIds.map(id => ({ roadId:id, fwd:true }));
   for (const seg of segs) {
+    if (!seg.roadId) continue; // skip bridge edges
     const geom = segGeom(seg);
     if (!geom.length) continue;
     L.polyline(geom, { color:'#e84040', weight:12, opacity:0.4 }).addTo(S.routeLayer);
@@ -2129,6 +2166,7 @@ function buildNavSteps(route) {
 
   for (let i = 0; i < segs.length; i++) {
     const { roadId, fwd, sd, ed } = segs[i];
+    if (!roadId) continue; // skip bridge edges
     const road = S.approvedRoads.find(r => r.id === roadId);
     if (!road) continue;
 
