@@ -2038,7 +2038,18 @@ function buildNavSteps(route) {
     notes: ''
   });
 
-  return steps;
+  // Merge consecutive steps on the same road into one
+  const merged = [];
+  for (const step of steps) {
+    const prev = merged[merged.length - 1];
+    if (prev && step.type === 'step' && prev.type === 'step' && step.roadName === prev.roadName) {
+      prev.distKm += step.distKm;
+    } else {
+      merged.push(step);
+    }
+  }
+
+  return merged;
 }
 
 function showRouteResult(route) {
