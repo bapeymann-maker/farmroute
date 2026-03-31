@@ -1724,13 +1724,13 @@ function injectSnapNode(G, snap, nodeIndex) {
   const dFromSnap = Math.max(0.0001, roadLength(road) - dToSnap);
 
   if (!G[snapKey]) G[snapKey] = [];
-  G[snapKey].push({ to: tk, roadId: road.id, dist: dFromSnap });
-  if (!road.oneWay) G[snapKey].push({ to: fk, roadId: road.id, dist: dToSnap });
+  G[snapKey].push({ to: tk, roadId: road.id, dist: dFromSnap, fwd: true });
+  if (!road.oneWay) G[snapKey].push({ to: fk, roadId: road.id, dist: dToSnap, fwd: false });
   if (!G[fk]) G[fk] = [];
-  G[fk].push({ to: snapKey, roadId: road.id, dist: dToSnap });
+  G[fk].push({ to: snapKey, roadId: road.id, dist: dToSnap, fwd: true });
   if (!road.oneWay) {
     if (!G[tk]) G[tk] = [];
-    G[tk].push({ to: snapKey, roadId: road.id, dist: dFromSnap });
+    G[tk].push({ to: snapKey, roadId: road.id, dist: dFromSnap, fwd: false });
   }
 }
 
@@ -1882,11 +1882,11 @@ function buildRoutingGraph(allowed) {
       const d = Math.max(0.0001, nodes[k+1].dist - nodes[k].dist);
 
       if (!G[fromK]) G[fromK] = [];
-      G[fromK].push({ to:toK, roadId:road.id, dist:d });
+      G[fromK].push({ to:toK, roadId:road.id, dist:d, fwd:true });
 
       if (!road.oneWay) {
         if (!G[toK]) G[toK] = [];
-        G[toK].push({ to:fromK, roadId:road.id, dist:d });
+        G[toK].push({ to:fromK, roadId:road.id, dist:d, fwd:false });
       }
     }
   }
@@ -1942,7 +1942,7 @@ function findRoute() {
       const nd = dist[cur]+e.dist;
       if (nd < dist[e.to]) {
         dist[e.to] = nd;
-        prev[e.to] = { from:cur, roadId:e.roadId };
+        prev[e.to] = { from:cur, roadId:e.roadId, fwd:e.fwd };
         pq.push({ id:e.to, d:nd });
       }
     }
@@ -1959,13 +1959,14 @@ function findRoute() {
     );
   }
 
-  // Reconstruct path
-  const roadIds = [];
+  // Reconstruct path — store roadId + travel direction
+  const roadSegs = [];
   let cur = endKey;
-  while (prev[cur]) { roadIds.unshift(prev[cur].roadId); cur = prev[cur].from; }
-  const dedupedIds = roadIds.filter((id,i) => i===0 || id!==roadIds[i-1]);
+  while (prev[cur]) { roadSegs.unshift({ roadId:prev[cur].roadId, fwd:prev[cur].fwd }); cur = prev[cur].from; }
+  // Deduplicate consecutive same-road segments
+  const dedupedSegs = roadSegs.filter((s,i) => i===0 || s.roadId!==roadSegs[i-1].roadId);
 
-  S.route = { roadIds:dedupedIds, fromWp, toWp, km:dist[endKey] };
+  S.route = { roadSegs:dedupedSegs, roadIds:dedupedSegs.map(s=>s.roadId), fromWp, toWp, km:dist[endKey] };
   drawRouteOnMap(S.route);
   showRouteResult(S.route);
   document.getElementById('start-nav-btn').style.display = 'flex';
@@ -1992,22 +1993,31 @@ function drawRouteOnMap(route) {
 // ================================================================
 function buildNavSteps(route) {
   const steps = [];
-  const roads = route.roadIds.map(id => S.approvedRoads.find(r => r.id === id)).filter(Boolean);
+  // Support both old (roadIds only) and new (roadSegs with fwd) format
+  const segs = route.roadSegs ||
+    route.roadIds.map(id => ({ roadId: id, fwd: true }));
 
-  for (let i = 0; i < roads.length; i++) {
-    const road = roads[i];
-    const g = road.geometry;
-    // Approach bearing: bearing of first segment of this road
+  for (let i = 0; i < segs.length; i++) {
+    const { roadId, fwd } = segs[i];
+    const road = S.approvedRoads.find(r => r.id === roadId);
+    if (!road) continue;
+
+    const g = fwd ? road.geometry : [...road.geometry].reverse();
+    // Departure bearing: direction we leave this road's start point
     const departBear = bearing(g[0][0], g[0][1], g[1][0], g[1][1]);
+
     let turn;
     if (i === 0) {
       turn = { arrow: '⬆', text: 'Head ' + compassDir(departBear) };
     } else {
-      // Approach bearing: last segment of previous road
-      const pg = roads[i-1].geometry;
+      // Approach bearing: direction we were travelling at end of previous road
+      const prevSeg = segs[i-1];
+      const prevRoad = S.approvedRoads.find(r => r.id === prevSeg.roadId);
+      const pg = prevSeg.fwd ? prevRoad.geometry : [...prevRoad.geometry].reverse();
       const approachBear = bearing(pg[pg.length-2][0], pg[pg.length-2][1], pg[pg.length-1][0], pg[pg.length-1][1]);
       turn = turnInfo(approachBear, departBear);
     }
+
     steps.push({
       type: 'step',
       roadId: road.id,
@@ -2020,13 +2030,10 @@ function buildNavSteps(route) {
     });
   }
 
-  // Arrival
   steps.push({
     type: 'arrive',
-    roadId: null,
-    roadName: '',
-    distKm: 0,
-    arrow: '🏁',
+    roadId: null, roadName: '',
+    distKm: 0, arrow: '🏁',
     instruction: `Arrive at ${route.toWp.name}`,
     notes: ''
   });
