@@ -1897,6 +1897,7 @@ function buildRoutingGraph(allowed, extraSplits = {}) {
     const splits = splitsByRoad[road.id]
       .sort((a,b) => a.dist - b.dist)
       .filter((s,i,arr) => {
+        if (s.mustInclude) return true; // snap nodes always included
         if (s.dist < 0.005 || s.dist > total-0.005) return false;
         if (i > 0 && s.dist - arr[i-1].dist < 0.005) return false;
         return true;
@@ -1957,7 +1958,7 @@ function findRoute() {
   const addExtra = (snap, d) => {
     const id = snap.road.id;
     if (!extraSplits[id]) extraSplits[id] = [];
-    extraSplits[id].push({ key: snap.key, dist: d });
+    extraSplits[id].push({ key: snap.key, dist: d, mustInclude: true });
   };
   addExtra(fromSnap, fromD);
   addExtra(toSnap,   toD);
@@ -1967,9 +1968,17 @@ function findRoute() {
   const startKey = fromSnap.key;
   const endKey   = toSnap.key;
   const allNodes = Object.keys(G);
-
-  if (!allNodes.includes(startKey)) return showErr(`Could not connect "${fromWp.name}" to the road network.`);
-  if (!allNodes.includes(endKey))   return showErr(`Could not connect "${toWp.name}" to the road network.`);
+  const startInGraph = allNodes.includes(startKey);
+  const endInGraph   = allNodes.includes(endKey);
+  console.log('[FarmRoute Route]', {
+    startKey, endKey,
+    startInGraph, endInGraph,
+    graphNodes: allNodes.length,
+    startEdges: G[startKey]?.length ?? 0,
+    endEdges:   G[endKey]?.length ?? 0
+  });
+  if (!startInGraph) return showErr(`Could not connect "${fromWp.name}" to the road network.<br><small>Snap road: ${fromSnap.road.name}, dist along: ${fromD.toFixed(4)}km</small>`);
+  if (!endInGraph)   return showErr(`Could not connect "${toWp.name}" to the road network.<br><small>Snap road: ${toSnap.road.name}, dist along: ${toD.toFixed(4)}km</small>`);
 
   // Dijkstra
   const dist = {}, prev = {}, vis = new Set();
