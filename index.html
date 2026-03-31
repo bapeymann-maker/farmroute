@@ -1673,15 +1673,38 @@ function roadLength(road) {
     d += haversine(road.geometry[i-1][0], road.geometry[i-1][1], road.geometry[i][0], road.geometry[i][1]);
   return d;
 }
+// Bearing from start of pts toward a point ~300m along (stable departure)
+function departureBearing(pts) {
+  if (pts.length < 2) return 0;
+  let d = 0;
+  for (let i = 1; i < pts.length; i++) {
+    d += haversine(pts[i-1][0], pts[i-1][1], pts[i][0], pts[i][1]);
+    if (d >= 0.3) return bearing(pts[0][0], pts[0][1], pts[i][0], pts[i][1]);
+  }
+  // Segment shorter than 300m — use overall start→end
+  return bearing(pts[0][0], pts[0][1], pts[pts.length-1][0], pts[pts.length-1][1]);
+}
+
+// Bearing from a point ~300m before end toward end of pts (stable approach)
+function approachBearing(pts) {
+  if (pts.length < 2) return 0;
+  let d = 0;
+  for (let i = pts.length - 2; i >= 0; i--) {
+    d += haversine(pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1]);
+    if (d >= 0.3) return bearing(pts[i][0], pts[i][1], pts[pts.length-1][0], pts[pts.length-1][1]);
+  }
+  return bearing(pts[0][0], pts[0][1], pts[pts.length-1][0], pts[pts.length-1][1]);
+}
+
 function turnInfo(pb, nb) {
-  const d = ((nb-pb+540)%360)-180;
+  const d = ((nb - pb + 540) % 360) - 180;
   if (d > 150 || d < -150) return { arrow:'↩', text:'Make a U-turn' };
-  if (d > 90)  return { arrow:'↱', text:'Turn sharp right' };
-  if (d > 35)  return { arrow:'→', text:'Turn right' };
-  if (d > 12)  return { arrow:'↗', text:'Keep right' };
-  if (d > -12) return { arrow:'⬆', text:'Continue straight' };
-  if (d > -35) return { arrow:'↖', text:'Keep left' };
-  if (d > -90) return { arrow:'←', text:'Turn left' };
+  if (d > 110)  return { arrow:'↱', text:'Turn sharp right' };
+  if (d > 35)   return { arrow:'→', text:'Turn right' };
+  if (d > 12)   return { arrow:'↗', text:'Keep right' };
+  if (d > -12)  return { arrow:'⬆', text:'Continue straight' };
+  if (d > -35)  return { arrow:'↖', text:'Keep left' };
+  if (d > -110) return { arrow:'←', text:'Turn left' };
   return { arrow:'↰', text:'Turn sharp left' };
 }
 
@@ -2061,15 +2084,15 @@ function buildNavSteps(route) {
     const g = segGeom(segs[i]);
     if (g.length < 2) continue;
 
-    const departBear = bearing(g[0][0], g[0][1], g[1][0], g[1][1]);
+    const departBear = departureBearing(g);
 
     let turn;
     if (i === 0) {
       turn = { arrow: '⬆', text: 'Head ' + compassDir(departBear) };
     } else {
       const pg = segGeom(segs[i-1]);
-      const approachBear = bearing(pg[pg.length-2][0], pg[pg.length-2][1], pg[pg.length-1][0], pg[pg.length-1][1]);
-      turn = turnInfo(approachBear, departBear);
+      const appBear = approachBearing(pg);
+      turn = turnInfo(appBear, departBear);
     }
 
     const drivenDist = Math.max(0.0001, (ed ?? roadLength(road)) - (sd ?? 0));
