@@ -508,6 +508,7 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
           <button class="btn btn-ghost btn-sm" onclick="document.getElementById('imp-file').click()">📥 Import</button>
           <input type="file" id="imp-file" accept=".json" style="display:none" onchange="importData(event)">
           <button class="btn btn-ghost btn-sm" onclick="loadSampleData()">📋 Sample Farm</button>
+          <button class="btn btn-ghost btn-sm" id="debug-btn" onclick="toggleDebugMode()" title="Show which roads are connected to each other">🔬 Debug Network</button>
           <button class="btn btn-danger btn-sm" onclick="clearAll()">🗑 Clear All</button>
         </div>
       </div>
@@ -558,6 +559,11 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
       <div class="legend-item"><div class="legend-swatch" style="background:var(--road-empty)"></div>Empty Semi</div>
       <div class="legend-item"><div class="legend-swatch" style="background:#888;"></div>OSM Roads</div>
       <div class="legend-item"><div class="legend-swatch" style="background:#e84040;height:5px"></div>Route</div>
+      <div id="debug-legend" style="display:none;width:100%;margin-top:4px;padding-top:4px;border-top:1px solid var(--border);">
+        <div class="legend-item"><div class="legend-swatch" style="background:#00e5ff"></div>🔬 Reachable</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#ff6b00"></div>🔬 Isolated</div>
+        <div class="legend-item" style="font-size:0.62rem;color:var(--text-muted);margin-top:2px;width:100%">Debug: tap a location to trace from it</div>
+      </div>
     </div><!-- /legend-items -->
   </div><!-- /legend-bar -->
   </div><!-- /sidebar-inner -->
@@ -1838,13 +1844,15 @@ function findRoute() {
   }
 
   if (!isFinite(dist[endKey])) {
-    // Helpful diagnostic: find which roads are in the graph
-    const reachable = new Set(Object.keys(dist).filter(k => isFinite(dist[k])));
     const totalRoads = allowed.length;
+    // Auto-run debug to show the connectivity problem visually
+    if (!debugMode) toggleDebugMode();
+    renderDebugNetwork(fromWp.lat, fromWp.lng);
     return showErr(
       `No connected route between these points.<br>` +
-      `${totalRoads} road${totalRoads !== 1 ? 's' : ''} approved but they may not form a continuous network.<br>` +
-      `<small>Tip: Make sure your approved roads share intersections — approve roads end-to-end so they connect.</small>`
+      `${totalRoads} road${totalRoads !== 1 ? 's' : ''} approved — ` +
+      `<b>Debug mode activated</b>: cyan roads connect from your origin, orange roads are isolated gaps.<br>` +
+      `<small>Approve roads to bridge the orange gaps into the cyan network.</small>`
     );
   }
 
@@ -2163,7 +2171,8 @@ function renderWpList() {
       <div style="font-size:1rem;flex-shrink:0">${WP_ICONS[wp.type]||'📍'}</div>
       <div class="card-body"><div class="card-name">${wp.name}</div><div class="card-sub">${wp.lat.toFixed(5)}, ${wp.lng.toFixed(5)}</div></div>
       <div class="card-actions">
-        <button class="btn btn-ghost btn-sm" onclick="flyTo('${wp.id}')">🗺</button>
+        <button class="btn btn-ghost btn-sm" onclick="flyTo('${wp.id}')" title="Fly to">🗺</button>
+        ${debugMode ? `<button class="btn btn-sm" style="background:#1a3a50;color:#00e5ff;border:1px solid #00e5ff" onclick="debugFromWaypoint('${wp.id}')" title="Debug network from here">🔬</button>` : ''}
         <button class="btn btn-danger btn-sm" onclick="delWp('${wp.id}')">✕</button>
       </div>
     </div>`).join('');
@@ -2740,6 +2749,172 @@ function confirmJdImport() {
   if (pts.length) map.fitBounds(pts, { padding: [50, 50] });
 
   setStatus('ready', `✓ Imported ${toAdd.length} field locations from John Deere`);
+}
+
+// ================================================================
+// DEBUG MODE — visualize road network connectivity
+// ================================================================
+let debugMode = false;
+let debugLayer = null;
+let debugOriginWpId = null;
+
+function toggleDebugMode() {
+  debugMode = !debugMode;
+  const btn = document.getElementById('debug-btn');
+  const legend = document.getElementById('debug-legend');
+
+  if (debugMode) {
+    btn.style.background = '#1a3a50';
+    btn.style.color = '#00e5ff';
+    btn.style.borderColor = '#00e5ff';
+    legend.style.display = 'flex';
+    legend.style.flexWrap = 'wrap';
+    legend.style.gap = '6px';
+    setStatus('loading', '🔬 Debug mode ON — select a From location in Route Planner then tap "Analyze Network"');
+    if (!debugLayer) debugLayer = L.layerGroup().addTo(map);
+    renderDebugNetwork();
+  } else {
+    btn.style.background = '';
+    btn.style.color = '';
+    btn.style.borderColor = '';
+    legend.style.display = 'none';
+    if (debugLayer) { debugLayer.clearLayers(); }
+    setStatus('ready', 'Debug mode off');
+  }
+}
+
+function renderDebugNetwork(fromLat, fromLng) {
+  if (!debugLayer) return;
+  debugLayer.clearLayers();
+
+  const v = S.vehicle || 'semi';
+  const c = v === 'semi' ? (S.load || 'full') : (S.impl || 'none');
+  const allowed = S.approvedRoads.filter(r => isRoadAllowed(r, v, c));
+
+  if (allowed.length === 0) {
+    setStatus('warn', '🔬 No approved roads for this vehicle type. Switch to Route Planner and set vehicle type first.');
+    return;
+  }
+
+  // Build node index with tolerance
+  const nodeIndex = buildNodeIndex(allowed);
+
+  // Build graph
+  const G = {};
+  for (const road of allowed) {
+    const g  = road.geometry;
+    const fk = resolveNode(nodeIndex, g[0]);
+    const tk = resolveNode(nodeIndex, g[g.length - 1]);
+    const d  = roadLength(road);
+    if (fk === tk && d < 0.01) continue;
+    if (!G[fk]) G[fk] = [];
+    G[fk].push({ to: tk, roadId: road.id, dist: d });
+    if (!road.oneWay) {
+      if (!G[tk]) G[tk] = [];
+      G[tk].push({ to: fk, roadId: road.id, dist: d });
+    }
+  }
+
+  // Find connected components using BFS from each unvisited node
+  const allNodes = new Set(Object.keys(G));
+  const componentOf = {}; // nodeKey → componentId
+  let componentId = 0;
+  const components = []; // array of Sets
+
+  for (const startNode of allNodes) {
+    if (componentOf[startNode] !== undefined) continue;
+    const comp = new Set();
+    const queue = [startNode];
+    while (queue.length) {
+      const n = queue.shift();
+      if (comp.has(n)) continue;
+      comp.add(n);
+      componentOf[n] = componentId;
+      for (const e of (G[n] || [])) {
+        if (!comp.has(e.to)) queue.push(e.to);
+      }
+    }
+    components.push(comp);
+    componentId++;
+  }
+
+  // Find which component the origin belongs to (if set)
+  let originComponent = -1;
+  if (fromLat !== undefined) {
+    const snap = snapWaypointToRoads(fromLat, fromLng, allowed);
+    if (snap) {
+      const fk = resolveNode(nodeIndex, snap.road.geometry[0]);
+      originComponent = componentOf[fk] ?? -1;
+    }
+  } else if (components.length > 0) {
+    // Default: highlight the largest component
+    let maxSize = 0;
+    components.forEach((comp, idx) => { if (comp.size > maxSize) { maxSize = comp.size; originComponent = idx; } });
+  }
+
+  // Map each road to its component and color it
+  const PALETTE = ['#00e5ff','#00ff88','#ffee00','#ff88ff','#88aaff','#ff8800','#00ffdd','#ff4488'];
+
+  const roadComponentMap = {};
+  for (const road of allowed) {
+    const g  = road.geometry;
+    const fk = resolveNode(nodeIndex, g[0]);
+    const compId = componentOf[fk] ?? -1;
+    roadComponentMap[road.id] = compId;
+  }
+
+  // Draw each road colored by connectivity
+  for (const road of allowed) {
+    const compId = roadComponentMap[road.id] ?? -1;
+    const isMainComp = compId === originComponent;
+    const color = isMainComp ? '#00e5ff' : '#ff6b00';
+    const weight = isMainComp ? 5 : 3;
+    const opacity = isMainComp ? 0.85 : 0.6;
+
+    const line = L.polyline(road.geometry, { color, weight, opacity, dashArray: isMainComp ? null : '6,4' });
+    const compSize = compId >= 0 ? components[compId]?.size || 0 : 0;
+    line.bindTooltip(
+      `<b>${road.name}</b><br>` +
+      `<span style="color:${color}">● ${isMainComp ? 'Reachable from origin' : 'ISOLATED — not connected'}</span><br>` +
+      `<small>Network cluster: ${compId >= 0 ? compId + 1 : '?'} (${compSize} nodes)</small>`,
+      { sticky: true }
+    );
+    debugLayer.addLayer(line);
+  }
+
+  // Draw node dots at each graph node
+  for (const nodeK of allNodes) {
+    const [la, lo] = nodeK.split(',').map(Number);
+    const compId = componentOf[nodeK] ?? -1;
+    const isMain = compId === originComponent;
+    L.circleMarker([la, lo], {
+      radius: 4, color: isMain ? '#00e5ff' : '#ff6b00',
+      weight: 1, fillColor: isMain ? '#00e5ff' : '#ff6b00', fillOpacity: 0.7
+    }).addTo(debugLayer);
+  }
+
+  // Summary
+  const mainSize = originComponent >= 0 ? components[originComponent]?.size || 0 : 0;
+  const isolated = allowed.filter(r => roadComponentMap[r.id] !== originComponent);
+  const connected = allowed.filter(r => roadComponentMap[r.id] === originComponent);
+
+  setStatus(isolated.length > 0 ? 'warn' : 'ready',
+    `🔬 ${components.length} cluster${components.length !== 1 ? 's' : ''} found · ` +
+    `${connected.length} roads connected (cyan) · ` +
+    `${isolated.length} isolated (orange)` +
+    (isolated.length > 0 ? ' — orange roads need a connecting segment to the main network' : ' — network looks fully connected!')
+  );
+}
+
+// Allow clicking a waypoint marker to debug from that point
+function debugFromWaypoint(wpId) {
+  if (!debugMode) return;
+  const wp = S.waypoints.find(w => w.id === wpId);
+  if (!wp) return;
+  debugOriginWpId = wpId;
+  setMode('admin');
+  renderDebugNetwork(wp.lat, wp.lng);
+  map.setView([wp.lat, wp.lng], 14);
 }
 
 function closeJdModal() {
