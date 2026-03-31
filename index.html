@@ -1685,35 +1685,72 @@ function isRoadAllowed(road, vehicle, config) {
   return ({ none:!!p.tractorNone, small:!!p.tractorSmall, large:!!p.tractorLarge, wide:!!p.tractorWide }[config] || false);
 }
 
-// Find nearest graph node to a lat/lng
-function nearestNode(lat, lng, allNodeKeys) {
-  let best = null, bestD = Infinity;
-  for (const k of allNodeKeys) {
-    const [la, lo] = k.split(',').map(Number);
-    const d = haversine(lat, lng, la, lo);
-    if (d < bestD) { bestD = d; best = k; }
+// Snap a waypoint to the nearest point on any allowed road geometry
+function snapWaypointToRoads(lat, lng, allowed) {
+  let bestDist = Infinity, bestRoad = null, bestPt = null, bestIdx = 0;
+  for (const road of allowed) {
+    const g = road.geometry;
+    for (let i = 0; i < g.length - 1; i++) {
+      const res = nearestPtOnSeg([lat, lng], g[i], g[i+1]);
+      const d = haversine(lat, lng, res.pt[0], res.pt[1]);
+      if (d < bestDist) { bestDist = d; bestRoad = road; bestPt = res.pt; bestIdx = i; }
+    }
   }
-  return { key: best, dist: bestD };
+  if (!bestRoad) return null;
+  return {
+    key: `snap_${lat.toFixed(6)}_${lng.toFixed(6)}`,
+    road: bestRoad, snapPt: bestPt, snapIdx: bestIdx, dist: bestDist
+  };
+}
+
+// Inject a snapped waypoint as a virtual node splitting its host road
+function injectSnapNode(G, snap) {
+  const road = snap.road;
+  const g = road.geometry;
+  const snapPt = snap.snapPt;
+  const snapKey = snap.key;
+  const fk = nodeKey(g[0]);
+  const tk = nodeKey(g[g.length - 1]);
+
+  // Distance from road start → snap point
+  let dToSnap = 0;
+  for (let i = 0; i < snap.snapIdx; i++)
+    dToSnap += haversine(g[i][0], g[i][1], g[i+1][0], g[i+1][1]);
+  dToSnap += haversine(g[snap.snapIdx][0], g[snap.snapIdx][1], snapPt[0], snapPt[1]);
+  const dFromSnap = Math.max(0, roadLength(road) - dToSnap);
+
+  if (!G[snapKey]) G[snapKey] = [];
+  // snap → road end (forward)
+  G[snapKey].push({ to: tk, roadId: road.id, dist: dFromSnap });
+  // snap → road start (backward, if not one-way)
+  if (!road.oneWay) G[snapKey].push({ to: fk, roadId: road.id, dist: dToSnap });
+  // road start → snap
+  if (!G[fk]) G[fk] = [];
+  G[fk].push({ to: snapKey, roadId: road.id, dist: dToSnap });
+  // road end → snap (if not one-way)
+  if (!road.oneWay) {
+    if (!G[tk]) G[tk] = [];
+    G[tk].push({ to: snapKey, roadId: road.id, dist: dFromSnap });
+  }
 }
 
 function findRoute() {
   const fromId = document.getElementById('rt-from').value;
-  const toId = document.getElementById('rt-to').value;
+  const toId   = document.getElementById('rt-to').value;
   if (!fromId || !toId) return showErr('Select both origin and destination.');
-  if (fromId === toId) return showErr('Origin and destination must be different.');
+  if (fromId === toId)  return showErr('Origin and destination must be different.');
 
   const v = S.vehicle, c = v === 'semi' ? S.load : S.impl;
   const allowed = S.approvedRoads.filter(r => isRoadAllowed(r, v, c));
+  if (allowed.length === 0) return showErr('No approved roads for this vehicle/load type.<br>Go to Admin Setup and approve some roads first.');
 
-  if (allowed.length === 0) return showErr('No approved roads found for this vehicle/load type.<br>Go to Admin Setup and approve some roads first.');
-
-  // Build graph: nodeKey → [{to, roadId, dist}]
+  // Build base graph from road endpoints
   const G = {};
   for (const road of allowed) {
     const g = road.geometry;
     const fk = nodeKey(g[0]);
     const tk = nodeKey(g[g.length - 1]);
-    const d = roadLength(road);
+    const d  = roadLength(road);
     if (!G[fk]) G[fk] = [];
     G[fk].push({ to: tk, roadId: road.id, dist: d });
     if (!road.oneWay) {
@@ -1722,29 +1759,37 @@ function findRoute() {
     }
   }
 
-  const allNodes = Object.keys(G);
-  if (allNodes.length === 0) return showErr('No road network found. Approve some roads first.');
-
-  // Snap origin/destination to nearest road node
   const fromWp = S.waypoints.find(w => w.id === fromId);
-  const toWp = S.waypoints.find(w => w.id === toId);
-  const fromSnap = nearestNode(fromWp.lat, fromWp.lng, allNodes);
-  const toSnap = nearestNode(toWp.lat, toWp.lng, allNodes);
+  const toWp   = S.waypoints.find(w => w.id === toId);
 
-  if (fromSnap.dist > 2) return showErr(`No approved roads within 2km of "${fromWp.name}".<br>Make sure roads are approved near your start point.`);
-  if (toSnap.dist > 2) return showErr(`No approved roads within 2km of "${toWp.name}".<br>Make sure roads are approved near your destination.`);
+  // Snap waypoints to nearest point on any approved road geometry
+  const fromSnap = snapWaypointToRoads(fromWp.lat, fromWp.lng, allowed);
+  const toSnap   = snapWaypointToRoads(toWp.lat,   toWp.lng,   allowed);
+
+  if (!fromSnap || fromSnap.dist > 10)
+    return showErr(`"${fromWp.name}" is more than 10km from any approved road.<br>Check that roads are approved near this location.`);
+  if (!toSnap || toSnap.dist > 10)
+    return showErr(`"${toWp.name}" is more than 10km from any approved road.<br>Check that roads are approved near this destination.`);
+
+  // Inject snap points as virtual nodes
+  injectSnapNode(G, fromSnap);
+  injectSnapNode(G, toSnap);
+
+  const startKey = fromSnap.key;
+  const endKey   = toSnap.key;
+  const allNodes = Object.keys(G);
 
   // Dijkstra
   const dist = {}, prev = {}, vis = new Set();
   allNodes.forEach(n => dist[n] = Infinity);
-  dist[fromSnap.key] = 0;
-  const pq = [{ id: fromSnap.key, d: 0 }];
+  dist[startKey] = 0;
+  const pq = [{ id: startKey, d: 0 }];
   while (pq.length) {
     pq.sort((a, b) => a.d - b.d);
     const { id: cur } = pq.shift();
     if (vis.has(cur)) continue;
     vis.add(cur);
-    if (cur === toSnap.key) break;
+    if (cur === endKey) break;
     for (const e of (G[cur] || [])) {
       const nd = dist[cur] + e.dist;
       if (nd < dist[e.to]) {
@@ -1755,19 +1800,16 @@ function findRoute() {
     }
   }
 
-  if (dist[toSnap.key] === Infinity) {
-    return showErr('No connected route found between these points.<br>The approved roads may not form a connected path.');
-  }
+  if (!isFinite(dist[endKey]))
+    return showErr('No connected route between these points.<br>The approved roads may not form a continuous path between them.');
 
-  // Reconstruct path
+  // Reconstruct and deduplicate road list
   const roadIds = [];
-  let cur = toSnap.key;
-  while (prev[cur]) {
-    roadIds.unshift(prev[cur].roadId);
-    cur = prev[cur].from;
-  }
+  let cur = endKey;
+  while (prev[cur]) { roadIds.unshift(prev[cur].roadId); cur = prev[cur].from; }
+  const dedupedIds = roadIds.filter((id, i) => i === 0 || id !== roadIds[i-1]);
 
-  S.route = { roadIds, fromWp, toWp, km: dist[toSnap.key] };
+  S.route = { roadIds: dedupedIds, fromWp, toWp, km: dist[endKey] };
   drawRouteOnMap(S.route);
   showRouteResult(S.route);
   document.getElementById('start-nav-btn').style.display = 'flex';
