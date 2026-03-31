@@ -1745,13 +1745,13 @@ function buildNodeIndex(allowed) {
   const union = (a, b) => { parent[find(a)] = find(b); };
 
   // Merge nodes within 80m (~0.0008 degrees)
-  const THRESH = 0.0008;
+  const THRESH = 0.0015;
   for (let i = 0; i < pts.length; i++) {
     for (let j = i + 1; j < pts.length; j++) {
       if (Math.abs(pts[i].lat - pts[j].lat) > THRESH) continue;
       if (Math.abs(pts[i].lng - pts[j].lng) > THRESH) continue;
       const d = haversine(pts[i].lat, pts[i].lng, pts[j].lat, pts[j].lng);
-      if (d < 0.08) union(pts[i].key, pts[j].key); // merge if within 80m
+      if (d < 0.15) union(pts[i].key, pts[j].key); // merge if within 150m
     }
   }
 
