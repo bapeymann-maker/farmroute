@@ -2449,9 +2449,21 @@ function setVehicle(v) {
   document.getElementById('semi-opts').style.display = v === 'semi' ? 'block' : 'none';
   document.getElementById('tractor-opts').style.display = v === 'tractor' ? 'block' : 'none';
   clearResult();
+  if (debugMode) renderDebugNetwork();
 }
-function setLoad(l) { S.load = l; document.getElementById('ls-full').classList.toggle('active', l === 'full'); document.getElementById('ls-empty').classList.toggle('active', l === 'empty'); clearResult(); }
-function setImpl(i) { S.impl = i; ['none','small','large','wide'].forEach(t => document.getElementById('impl-'+t).classList.toggle('active', t === i)); clearResult(); }
+function setLoad(l) {
+  S.load = l;
+  document.getElementById('ls-full').classList.toggle('active', l === 'full');
+  document.getElementById('ls-empty').classList.toggle('active', l === 'empty');
+  clearResult();
+  if (debugMode) renderDebugNetwork();
+}
+function setImpl(i) {
+  S.impl = i;
+  ['none','small','large','wide'].forEach(t => document.getElementById('impl-'+t).classList.toggle('active', t === i));
+  clearResult();
+  if (debugMode) renderDebugNetwork();
+}
 function showHint(txt) { const h = document.getElementById('map-hint'); h.textContent = txt; h.style.display = 'block'; }
 function hideHint() { document.getElementById('map-hint').style.display = 'none'; }
 
@@ -2991,10 +3003,18 @@ function renderDebugNetwork(fromLat, fromLng) {
   if (!debugLayer) return;
   debugLayer.clearLayers();
 
-  const all = S.approvedRoads;
-  if (all.length === 0) { setStatus('warn', '🔬 No approved roads to analyze.'); return; }
+  // Use same vehicle filter as routing so debug reflects actual routing connectivity
+  const v = S.vehicle || 'semi';
+  const c = v === 'semi' ? (S.load || 'full') : (S.impl || 'none');
+  const all = S.approvedRoads.filter(r => isRoadAllowed(r, v, c));
+  const vLabel = v === 'semi' ? `Semi (${c === 'full' ? 'Full Load' : 'Empty'})` : `Tractor (${c})`;
 
-  setStatus('loading', `🔬 Analyzing ${all.length} roads…`);
+  if (all.length === 0) {
+    setStatus('warn', `🔬 No approved roads for ${vLabel}. Switch to Route Planner and set vehicle type first.`);
+    return;
+  }
+
+  setStatus('loading', `🔬 Analyzing ${all.length} roads for ${vLabel}…`);
 
   // -------------------------------------------------------
   // Use IDENTICAL connectivity logic as the routing engine:
@@ -3103,10 +3123,10 @@ function renderDebugNetwork(fromLat, fromLng) {
   });
 
   if (clusters.length === 1) {
-    setStatus('ready', `🔬 ✓ All ${all.length} roads form one connected network!`);
+    setStatus('ready', `🔬 ✓ All ${all.length} roads for ${vLabel} form one connected network!`);
   } else {
     setStatus('warn',
-      `🔬 ${clusters.length} separate clusters — ` +
+      `🔬 ${vLabel}: ${clusters.length} separate clusters — ` +
       `${mainCount} roads in main network (cyan) · ` +
       `${isolated} roads in ${clusters.length-1} isolated cluster${clusters.length>2?'s':''} (other colors). ` +
       `Zoom into color boundaries to find gaps.`
