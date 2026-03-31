@@ -2991,84 +2991,71 @@ function renderDebugNetwork(fromLat, fromLng) {
   if (!debugLayer) return;
   debugLayer.clearLayers();
 
-  // Use all roads regardless of vehicle type for debug
   const all = S.approvedRoads;
-  if (all.length === 0) {
-    setStatus('warn', '🔬 No approved roads to analyze.');
-    return;
-  }
+  if (all.length === 0) { setStatus('warn', '🔬 No approved roads to analyze.'); return; }
 
-  setStatus('loading', `🔬 Analyzing ${all.length} road segments…`);
+  setStatus('loading', `🔬 Analyzing ${all.length} roads…`);
 
   // -------------------------------------------------------
-  // Step 1: Build adjacency using ALL geometry points
-  // Two roads are "connected" if any point on road A is within
-  // CONNECT_THRESH km of any point on road B
+  // Use IDENTICAL connectivity logic as the routing engine:
+  // Two roads connect if their endpoints are within 150m (buildNodeIndex)
+  // OR if they geometrically cross (findCrossings)
   // -------------------------------------------------------
-  const CONNECT_THRESH = 0.15; // 150m
-
-  // Collect all points per road for fast lookup
-  const roadPts = all.map(road => road.geometry);
-
-  // Union-Find over road indices
   const parent = all.map((_, i) => i);
-  function find(i) {
-    while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i;
-  }
+  function find(i) { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; }
   function union(a, b) { parent[find(a)] = find(b); }
 
-  // For each pair of roads, check if they're close enough to connect
-  // Use only endpoints + every Nth midpoint for speed
-  function samplePts(geom) {
-    const pts = [];
-    pts.push(geom[0]);
-    pts.push(geom[geom.length - 1]);
-    // Sample up to 6 midpoints
-    const step = Math.max(1, Math.floor(geom.length / 6));
-    for (let i = step; i < geom.length - 1; i += step) pts.push(geom[i]);
-    return pts;
-  }
-
-  const samples = roadPts.map(samplePts);
-
+  // 1. Endpoint proximity (same as buildNodeIndex at 150m)
+  const endpoints = all.map(r => ({
+    start: r.geometry[0],
+    end:   r.geometry[r.geometry.length - 1]
+  }));
   for (let i = 0; i < all.length; i++) {
     for (let j = i + 1; j < all.length; j++) {
-      if (find(i) === find(j)) continue; // already connected
-      let connected = false;
-      outer: for (const pa of samples[i]) {
-        for (const pb of samples[j]) {
-          if (Math.abs(pa[0] - pb[0]) > 0.002) continue;
-          if (Math.abs(pa[1] - pb[1]) > 0.002) continue;
-          if (haversine(pa[0], pa[1], pb[0], pb[1]) < CONNECT_THRESH) {
-            connected = true; break outer;
-          }
+      if (find(i) === find(j)) continue;
+      const pairs = [
+        [endpoints[i].start, endpoints[j].start],
+        [endpoints[i].start, endpoints[j].end],
+        [endpoints[i].end,   endpoints[j].start],
+        [endpoints[i].end,   endpoints[j].end]
+      ];
+      for (const [a, b] of pairs) {
+        if (Math.abs(a[0]-b[0]) < 0.002 && Math.abs(a[1]-b[1]) < 0.002
+            && haversine(a[0],a[1],b[0],b[1]) < 0.15) {
+          union(i, j); break;
         }
       }
-      if (connected) union(i, j);
+    }
+  }
+
+  // 2. Geometric crossings (same as buildRoutingGraph)
+  for (let i = 0; i < all.length; i++) {
+    for (let j = i + 1; j < all.length; j++) {
+      if (find(i) === find(j)) continue;
+      const bA = geomBounds(all[i].geometry), bB = geomBounds(all[j].geometry);
+      if (bA.maxLat < bB.minLat-0.001 || bB.maxLat < bA.minLat-0.001) continue;
+      if (bA.maxLng < bB.minLng-0.001 || bB.maxLng < bA.minLng-0.001) continue;
+      const crossings = findCrossings(all[i].geometry, all[j].geometry);
+      if (crossings.length > 0) union(i, j);
     }
   }
 
   // -------------------------------------------------------
-  // Step 2: Group roads into clusters
+  // Group into clusters
   // -------------------------------------------------------
-  const clusterMap = {}; // root → [road indices]
+  const clusterMap = {};
   all.forEach((_, i) => {
     const root = find(i);
     if (!clusterMap[root]) clusterMap[root] = [];
     clusterMap[root].push(i);
   });
-
   const clusters = Object.values(clusterMap).sort((a, b) => b.length - a.length);
-  const roadToCluster = {};
-  all.forEach((_, i) => { roadToCluster[i] = clusters.findIndex(c => c.includes(i)); });
+  const roadToCluster = new Array(all.length);
+  clusters.forEach((c, ci) => c.forEach(i => { roadToCluster[i] = ci; }));
 
-  // -------------------------------------------------------
-  // Step 3: Find which cluster the origin belongs to
-  // -------------------------------------------------------
-  let originCluster = 0; // default: largest
-
+  // Which cluster does the origin belong to?
+  let originCluster = 0;
   if (fromLat !== undefined) {
-    // Find closest road to the origin point
     let bestDist = Infinity, bestIdx = 0;
     all.forEach((road, i) => {
       const d = minDistToPolyline(fromLat, fromLng, road.geometry);
@@ -3078,65 +3065,50 @@ function renderDebugNetwork(fromLat, fromLng) {
   }
 
   // -------------------------------------------------------
-  // Step 4: Draw roads colored by cluster
+  // Draw roads colored by cluster
   // -------------------------------------------------------
   all.forEach((road, i) => {
-    const clIdx = roadToCluster[i];
-    const isOriginCluster = clIdx === originCluster;
-    let color, dash, weight, opacity;
-
-    if (isOriginCluster) {
-      color = '#00e5ff'; dash = null; weight = 5; opacity = 0.9;
-    } else {
-      // Each isolated cluster gets a distinct warm color
-      color = CLUSTER_COLORS[1 + (clIdx % (CLUSTER_COLORS.length - 1))];
-      if (clIdx > CLUSTER_COLORS.length - 2) color = '#ff6b00';
-      dash = '7,5'; weight = 4; opacity = 0.75;
-    }
-
-    const line = L.polyline(road.geometry, { color, weight, opacity, dashArray: dash });
-    const clSize = clusters[clIdx]?.length || 1;
+    const ci = roadToCluster[i];
+    const isMain = ci === originCluster;
+    const color = isMain ? '#00e5ff' : CLUSTER_COLORS[1 + (ci % (CLUSTER_COLORS.length - 1))];
+    const line = L.polyline(road.geometry, {
+      color, weight: isMain ? 5 : 4, opacity: isMain ? 0.9 : 0.75,
+      dashArray: isMain ? null : '7,5'
+    });
     line.bindTooltip(
       `<b>${road.name}</b><br>` +
-      `<span style="color:${color}">● Cluster ${clIdx + 1} (${clSize} road${clSize !== 1 ? 's' : ''})</span><br>` +
-      `<small>${isOriginCluster ? '✓ Connected to origin' : '⚠ Gap from origin network'}</small>`,
+      `<span style="color:${color}">● Cluster ${ci+1} (${clusters[ci].length} roads)</span><br>` +
+      `<small>${isMain ? '✓ Connected to origin' : '⚠ Gap from origin network'}</small>`,
       { sticky: true }
     );
     debugLayer.addLayer(line);
   });
 
-  // Draw endpoint dots
-  all.forEach((road) => {
-    const g = road.geometry;
-    [[g[0], 'start'], [g[g.length-1], 'end']].forEach(([pt]) => {
-      L.circleMarker(pt, {
-        radius: 4, color: '#fff', weight: 1, fillColor: '#333', fillOpacity: 0.7
-      }).addTo(debugLayer);
+  // Endpoint dots
+  all.forEach(road => {
+    [road.geometry[0], road.geometry[road.geometry.length-1]].forEach(pt => {
+      L.circleMarker(pt, { radius:3, color:'#fff', weight:1, fillColor:'#333', fillOpacity:0.7 }).addTo(debugLayer);
     });
   });
 
   // -------------------------------------------------------
-  // Step 5: Status summary
+  // Summary
   // -------------------------------------------------------
   const mainCount = clusters[originCluster]?.length || 0;
   const isolated = all.length - mainCount;
-  const clusterCount = clusters.length;
-
   console.log('[FarmRoute Debug]', {
-    totalRoads: all.length,
-    clusters: clusterCount,
-    mainClusterRoads: mainCount,
-    isolatedRoads: isolated,
+    totalRoads: all.length, clusters: clusters.length,
+    mainClusterRoads: mainCount, isolatedRoads: isolated,
     clusterSizes: clusters.map(c => c.length)
   });
 
-  if (clusterCount === 1) {
-    setStatus('ready', `🔬 ✓ All ${all.length} roads form one connected network — routing should work!`);
+  if (clusters.length === 1) {
+    setStatus('ready', `🔬 ✓ All ${all.length} roads form one connected network!`);
   } else {
     setStatus('warn',
-      `🔬 ${clusterCount} separate clusters — ` +
+      `🔬 ${clusters.length} separate clusters — ` +
       `${mainCount} roads in main network (cyan) · ` +
-      `${isolated} roads in ${clusterCount - 1} isolated cluster${clusterCount > 2 ? 's' : ''} (other colors). ` +
+      `${isolated} roads in ${clusters.length-1} isolated cluster${clusters.length>2?'s':''} (other colors). ` +
       `Zoom into color boundaries to find gaps.`
     );
   }
