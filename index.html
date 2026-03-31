@@ -543,7 +543,17 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
       <div class="field"><label class="field-label">Going To</label>
         <select class="field-select" id="rt-to" onchange="clearResult()"><option value="">— Select location —</option></select></div>
       <button class="btn btn-gold btn-block" onclick="findRoute()">🔍 Find Best Route</button>
-      <button class="btn btn-green btn-block btn-gap" id="start-nav-btn" style="display:none" onclick="startNavigation()">▶ Start Turn-by-Turn Navigation</button>
+      <div id="nav-btns" style="display:none">
+        <button class="btn btn-block btn-gap" id="gmaps-btn" onclick="openInGoogleMaps()" style="background:#4285f4;color:#fff;border-color:#4285f4;font-size:0.95rem;padding:12px;justify-content:center;width:100%">
+          <svg style="width:18px;height:18px;margin-right:6px;flex-shrink:0" viewBox="0 0 24 24" fill="white"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+          Open in Google Maps
+        </button>
+        <button class="btn btn-block btn-gap" id="amaps-btn" onclick="openInAppleMaps()" style="background:#000;color:#fff;border-color:#333;font-size:0.95rem;padding:12px;justify-content:center;width:100%">
+          <svg style="width:18px;height:18px;margin-right:6px;flex-shrink:0" viewBox="0 0 24 24" fill="white"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+          Open in Apple Maps
+        </button>
+        <button class="btn btn-ghost btn-block btn-gap" id="start-nav-btn" onclick="startNavigation()" style="font-size:0.8rem;padding:8px;justify-content:center;width:100%">▶ Built-in Navigation (basic)</button>
+      </div>
       <div id="rt-result"></div>
     </div>
 
@@ -2098,7 +2108,7 @@ function findRoute() {
   S.route = { roadSegs:dedupedSegs, roadIds:dedupedSegs.map(s=>s.roadId), fromWp, toWp, km:dist[endKey] };
   drawRouteOnMap(S.route);
   showRouteResult(S.route);
-  document.getElementById('start-nav-btn').style.display = 'flex';
+  document.getElementById('nav-btns').style.display = 'block';
 }
 
 // Extract the sub-geometry of a road between two distances along it
@@ -2249,17 +2259,108 @@ function showRouteResult(route) {
 function showErr(msg) {
   document.getElementById('rt-result').innerHTML = `<div class="route-card error"><div class="route-header err">⚠ No Route</div><div style="font-size:0.8rem;color:var(--text-dim);line-height:1.5">${msg}</div></div>`;
   S.routeLayer.clearLayers();
-  document.getElementById('start-nav-btn').style.display = 'none';
+  document.getElementById('nav-btns').style.display = 'none';
 }
 function clearResult() {
   document.getElementById('rt-result').innerHTML = '';
   S.routeLayer.clearLayers();
-  document.getElementById('start-nav-btn').style.display = 'none';
+  document.getElementById('nav-btns').style.display = 'none';
 }
 
 // ================================================================
-// NAVIGATION
+// GOOGLE MAPS EXPORT
 // ================================================================
+function openInGoogleMaps() {
+  if (!S.route) return;
+
+  const { fromWp, toWp, roadSegs } = S.route;
+  const segs = (roadSegs || []).filter(s => s.roadId);
+
+  // Build ordered list of key turn points from route geometry
+  // Google Maps supports origin + up to 8 waypoints + destination (10 total)
+  const turnPoints = [];
+
+  for (let i = 0; i < segs.length; i++) {
+    const g = segGeom(segs[i]);
+    if (!g.length) continue;
+    // The junction between segments is the end of this seg / start of next
+    if (i < segs.length - 1) {
+      const endPt = g[g.length - 1];
+      turnPoints.push(endPt);
+    }
+  }
+
+  // Reduce to max 8 waypoints by picking evenly spaced turns
+  const MAX_WP = 8;
+  let waypoints = turnPoints;
+  if (turnPoints.length > MAX_WP) {
+    const step = (turnPoints.length - 1) / (MAX_WP - 1);
+    waypoints = [];
+    for (let i = 0; i < MAX_WP; i++) {
+      waypoints.push(turnPoints[Math.round(i * step)]);
+    }
+  }
+
+  const origin      = `${fromWp.lat.toFixed(6)},${fromWp.lng.toFixed(6)}`;
+  const destination = `${toWp.lat.toFixed(6)},${toWp.lng.toFixed(6)}`;
+  const wpStr = waypoints.map(p => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join('|');
+
+  // Build Google Maps URL — works on mobile (opens app) and desktop (opens browser)
+  let url = `https://www.google.com/maps/dir/?api=1` +
+    `&origin=${origin}` +
+    `&destination=${destination}` +
+    `&travelmode=driving`;
+
+  if (wpStr) url += `&waypoints=${encodeURIComponent(wpStr)}`;
+
+  window.open(url, '_blank');
+}
+
+function openInAppleMaps() {
+  if (!S.route) return;
+
+  const { fromWp, toWp, roadSegs } = S.route;
+  const segs = (roadSegs || []).filter(s => s.roadId);
+
+  // Build turn points same as Google Maps
+  const turnPoints = [];
+  for (let i = 0; i < segs.length; i++) {
+    const g = segGeom(segs[i]);
+    if (!g.length) continue;
+    if (i < segs.length - 1) turnPoints.push(g[g.length - 1]);
+  }
+
+  // Apple Maps URL supports origin + destination + up to 8 waypoints
+  const MAX_WP = 8;
+  let waypoints = turnPoints;
+  if (turnPoints.length > MAX_WP) {
+    const step = (turnPoints.length - 1) / (MAX_WP - 1);
+    waypoints = [];
+    for (let i = 0; i < MAX_WP; i++) {
+      waypoints.push(turnPoints[Math.round(i * step)]);
+    }
+  }
+
+  const saddr = `${fromWp.lat.toFixed(6)},${fromWp.lng.toFixed(6)}`;
+  const daddr = `${toWp.lat.toFixed(6)},${toWp.lng.toFixed(6)}`;
+
+  // Apple Maps uses the maps.apple.com URL scheme
+  // On iOS it opens the Maps app; on other devices it opens in browser
+  let url = `https://maps.apple.com/?saddr=${saddr}&daddr=${daddr}&dirflg=d`;
+
+  // Apple Maps doesn't support intermediate waypoints in the URL directly,
+  // so we use the last waypoint as the destination and chain them
+  // Best approach: send origin → first major waypoint → ... → destination
+  // by opening with the full coordinate string in daddr
+  if (waypoints.length > 0) {
+    // Encode waypoints as intermediate stops chained into daddr
+    // Apple Maps supports multiple daddr params for waypoints
+    const wpParams = waypoints.map(p => `&daddr=${p[0].toFixed(6)},${p[1].toFixed(6)}`).join('');
+    url = `https://maps.apple.com/?saddr=${saddr}${wpParams}&daddr=${daddr}&dirflg=d`;
+  }
+
+  window.open(url, '_blank');
+}
 function startNavigation() {
   if (!S.route) return;
   S.navSteps = buildNavSteps(S.route);
