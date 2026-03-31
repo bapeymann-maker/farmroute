@@ -2002,13 +2002,56 @@ function findRoute() {
   }
 
   if (!isFinite(dist[endKey])) {
+    // Directed BFS to find how many nodes are reachable from start
+    const reachable = new Set();
+    const bfsQ = [startKey];
+    while (bfsQ.length) {
+      const n = bfsQ.shift();
+      if (reachable.has(n)) continue;
+      reachable.add(n);
+      for (const e of (G[n] || [])) { if (!reachable.has(e.to)) bfsQ.push(e.to); }
+    }
+
+    // Check reverse: can we reach startKey from endKey?
+    const reverseReachable = new Set();
+    const bfsR = [endKey];
+    while (bfsR.length) {
+      const n = bfsR.shift();
+      if (reverseReachable.has(n)) continue;
+      reverseReachable.add(n);
+      for (const e of (G[n] || [])) { if (!reverseReachable.has(e.to)) bfsR.push(e.to); }
+    }
+
+    const endReachableFromStart = reachable.has(endKey);
+    const startReachableFromEnd = reverseReachable.has(startKey);
+
+    console.log('[FarmRoute OneWay Diag]', {
+      nodesReachableFromStart: reachable.size,
+      nodesReachableFromEnd: reverseReachable.size,
+      totalNodes: allNodes.length,
+      endReachableFromStart,
+      startReachableFromEnd,
+      likelyOneWayBlock: !endReachableFromStart && startReachableFromEnd
+    });
+
     if (!debugMode) toggleDebugMode();
     renderDebugNetwork(fromWp.lat, fromWp.lng);
-    return showErr(
-      `No connected route between these points.<br>` +
-      `${allowed.length} road${allowed.length!==1?'s':''} approved — ` +
-      `<b>Debug mode on:</b> each color = a separate cluster.`
-    );
+
+    // Find one-way roads in the allowed set
+    const oneWayRoads = allowed.filter(r => r.oneWay).map(r => r.name);
+
+    let msg = `No connected route between these points.<br>`;
+    if (!endReachableFromStart && startReachableFromEnd) {
+      msg += `<b>⚠ One-way roads are blocking this direction.</b><br>` +
+        `The route works in reverse but not forward.<br>` +
+        `One-way roads in your network: ${oneWayRoads.length > 0 ? oneWayRoads.join(', ') : 'none found'}<br>` +
+        `<small>Check that one-way roads aren't cutting off the path from "${fromWp.name}" to "${toWp.name}".</small>`;
+    } else {
+      msg += `${allowed.length} roads approved — ` +
+        `Reachable from origin: ${reachable.size}/${allNodes.length} nodes.<br>` +
+        `<small>Debug mode on: zoom in where clusters meet to find gaps.</small>`;
+    }
+    return showErr(msg);
   }
 
   const roadSegs = [];
