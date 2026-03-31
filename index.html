@@ -1704,34 +1704,67 @@ function snapWaypointToRoads(lat, lng, allowed) {
 }
 
 // Inject a snapped waypoint as a virtual node splitting its host road
-function injectSnapNode(G, snap) {
+function injectSnapNode(G, snap, nodeIndex) {
   const road = snap.road;
   const g = road.geometry;
-  const snapPt = snap.snapPt;
   const snapKey = snap.key;
-  const fk = nodeKey(g[0]);
-  const tk = nodeKey(g[g.length - 1]);
+  const fk = resolveNode(nodeIndex, g[0]);
+  const tk = resolveNode(nodeIndex, g[g.length - 1]);
 
-  // Distance from road start → snap point
   let dToSnap = 0;
   for (let i = 0; i < snap.snapIdx; i++)
     dToSnap += haversine(g[i][0], g[i][1], g[i+1][0], g[i+1][1]);
-  dToSnap += haversine(g[snap.snapIdx][0], g[snap.snapIdx][1], snapPt[0], snapPt[1]);
-  const dFromSnap = Math.max(0, roadLength(road) - dToSnap);
+  dToSnap += haversine(g[snap.snapIdx][0], g[snap.snapIdx][1], snap.snapPt[0], snap.snapPt[1]);
+  const dFromSnap = Math.max(0.0001, roadLength(road) - dToSnap);
 
   if (!G[snapKey]) G[snapKey] = [];
-  // snap → road end (forward)
   G[snapKey].push({ to: tk, roadId: road.id, dist: dFromSnap });
-  // snap → road start (backward, if not one-way)
   if (!road.oneWay) G[snapKey].push({ to: fk, roadId: road.id, dist: dToSnap });
-  // road start → snap
   if (!G[fk]) G[fk] = [];
   G[fk].push({ to: snapKey, roadId: road.id, dist: dToSnap });
-  // road end → snap (if not one-way)
   if (!road.oneWay) {
     if (!G[tk]) G[tk] = [];
     G[tk].push({ to: snapKey, roadId: road.id, dist: dFromSnap });
   }
+}
+
+// Build a spatial index of nodes, merging endpoints within ~50m of each other
+// Returns a lookup: raw nodeKey → canonical nodeKey
+function buildNodeIndex(allowed) {
+  // Collect all endpoints
+  const pts = []; // [{lat, lng, key}]
+  for (const road of allowed) {
+    const g = road.geometry;
+    pts.push({ lat: g[0][0], lng: g[0][1], key: nodeKey(g[0]) });
+    pts.push({ lat: g[g.length-1][0], lng: g[g.length-1][1], key: nodeKey(g[g.length-1]) });
+  }
+
+  // Union-Find for merging close nodes
+  const parent = {};
+  const find = k => { if (parent[k] === undefined) parent[k] = k; return parent[k] === k ? k : (parent[k] = find(parent[k])); };
+  const union = (a, b) => { parent[find(a)] = find(b); };
+
+  // Merge nodes within 80m (~0.0008 degrees)
+  const THRESH = 0.0008;
+  for (let i = 0; i < pts.length; i++) {
+    for (let j = i + 1; j < pts.length; j++) {
+      if (Math.abs(pts[i].lat - pts[j].lat) > THRESH) continue;
+      if (Math.abs(pts[i].lng - pts[j].lng) > THRESH) continue;
+      const d = haversine(pts[i].lat, pts[i].lng, pts[j].lat, pts[j].lng);
+      if (d < 0.08) union(pts[i].key, pts[j].key); // merge if within 80m
+    }
+  }
+
+  // Build canonical key lookup
+  const index = {};
+  pts.forEach(p => { index[p.key] = find(p.key); });
+  return index;
+}
+
+// Resolve a coordinate to its canonical (merged) node key
+function resolveNode(nodeIndex, pt) {
+  const k = nodeKey(pt);
+  return nodeIndex[k] || k;
 }
 
 function findRoute() {
@@ -1744,13 +1777,17 @@ function findRoute() {
   const allowed = S.approvedRoads.filter(r => isRoadAllowed(r, v, c));
   if (allowed.length === 0) return showErr('No approved roads for this vehicle/load type.<br>Go to Admin Setup and approve some roads first.');
 
-  // Build base graph from road endpoints
+  // Build node index with tolerance merging so nearby endpoints connect
+  const nodeIndex = buildNodeIndex(allowed);
+
+  // Build graph using canonical node keys
   const G = {};
   for (const road of allowed) {
-    const g = road.geometry;
-    const fk = nodeKey(g[0]);
-    const tk = nodeKey(g[g.length - 1]);
+    const g  = road.geometry;
+    const fk = resolveNode(nodeIndex, g[0]);
+    const tk = resolveNode(nodeIndex, g[g.length - 1]);
     const d  = roadLength(road);
+    if (fk === tk && d < 0.01) continue; // skip zero-length loops
     if (!G[fk]) G[fk] = [];
     G[fk].push({ to: tk, roadId: road.id, dist: d });
     if (!road.oneWay) {
@@ -1762,7 +1799,7 @@ function findRoute() {
   const fromWp = S.waypoints.find(w => w.id === fromId);
   const toWp   = S.waypoints.find(w => w.id === toId);
 
-  // Snap waypoints to nearest point on any approved road geometry
+  // Snap waypoints to nearest point on any approved road
   const fromSnap = snapWaypointToRoads(fromWp.lat, fromWp.lng, allowed);
   const toSnap   = snapWaypointToRoads(toWp.lat,   toWp.lng,   allowed);
 
@@ -1771,9 +1808,9 @@ function findRoute() {
   if (!toSnap || toSnap.dist > 10)
     return showErr(`"${toWp.name}" is more than 10km from any approved road.<br>Check that roads are approved near this destination.`);
 
-  // Inject snap points as virtual nodes
-  injectSnapNode(G, fromSnap);
-  injectSnapNode(G, toSnap);
+  // Inject snap points as virtual entry nodes
+  injectSnapNode(G, fromSnap, nodeIndex);
+  injectSnapNode(G, toSnap,   nodeIndex);
 
   const startKey = fromSnap.key;
   const endKey   = toSnap.key;
@@ -1800,10 +1837,18 @@ function findRoute() {
     }
   }
 
-  if (!isFinite(dist[endKey]))
-    return showErr('No connected route between these points.<br>The approved roads may not form a continuous path between them.');
+  if (!isFinite(dist[endKey])) {
+    // Helpful diagnostic: find which roads are in the graph
+    const reachable = new Set(Object.keys(dist).filter(k => isFinite(dist[k])));
+    const totalRoads = allowed.length;
+    return showErr(
+      `No connected route between these points.<br>` +
+      `${totalRoads} road${totalRoads !== 1 ? 's' : ''} approved but they may not form a continuous network.<br>` +
+      `<small>Tip: Make sure your approved roads share intersections — approve roads end-to-end so they connect.</small>`
+    );
+  }
 
-  // Reconstruct and deduplicate road list
+  // Reconstruct and deduplicate
   const roadIds = [];
   let cur = endKey;
   while (prev[cur]) { roadIds.unshift(prev[cur].roadId); cur = prev[cur].from; }
@@ -1926,7 +1971,7 @@ function startNavigation() {
   document.getElementById('nav-arrived-banner').classList.remove('show');
 
   if (!S.navMap) {
-    S.navMap = L.map('nav-leaflet', { zoomControl: true, attributionControl: false }).setView([44.152, -94.005], 14);
+    S.navMap = L.map('nav-leaflet', { zoomControl: true, attributionControl: false }).setView([43.8279, -94.4364], 14);
     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
       attribution: '© CARTO © OpenStreetMap', subdomains: 'abcd', maxZoom: 19
     }).addTo(S.navMap);
@@ -2397,7 +2442,7 @@ async function persist() {
 // ================================================================
 window.addEventListener('load', async () => {
   // Init map first (it renders even before login)
-  map = L.map('map', { zoomControl: true }).setView([44.152, -94.005], 13);
+  map = L.map('map', { zoomControl: true }).setView([43.8279, -94.4364], 14);
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     attribution: '© <a href="https://carto.com/">CARTO</a> © <a href="https://openstreetmap.org">OpenStreetMap</a>',
     subdomains: 'abcd', maxZoom: 19
