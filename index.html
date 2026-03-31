@@ -552,6 +552,9 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
           <svg style="width:18px;height:18px;margin-right:6px;flex-shrink:0" viewBox="0 0 24 24" fill="white"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
           Open in Apple Maps
         </button>
+        <button class="btn btn-block btn-gap" id="gpx-btn" onclick="downloadGPX()" style="background:#2a6b3a;color:#fff;border-color:#2a6b3a;font-size:0.95rem;padding:12px;justify-content:center;width:100%">
+          📥 Download GPX Route File
+        </button>
         <button class="btn btn-ghost btn-block btn-gap" id="start-nav-btn" onclick="startNavigation()" style="font-size:0.8rem;padding:8px;justify-content:center;width:100%">▶ Built-in Navigation (basic)</button>
       </div>
       <div id="rt-result"></div>
@@ -2270,47 +2273,67 @@ function clearResult() {
 // ================================================================
 // GOOGLE MAPS EXPORT
 // ================================================================
+// ================================================================
+// MAPS EXPORT — force exact route via significant turn waypoints
+// ================================================================
+
+// Extract all junction points with their turn angle
+function getRouteJunctions(route) {
+  const segs = (route.roadSegs || []).filter(s => s.roadId);
+  const junctions = [];
+
+  for (let i = 0; i < segs.length - 1; i++) {
+    const g1 = segGeom(segs[i]);
+    const g2 = segGeom(segs[i + 1]);
+    if (!g1.length || !g2.length) continue;
+
+    const pt = g1[g1.length - 1];
+    const app = approachBearing(g1);
+    const dep = departureBearing(g2);
+    const angle = Math.abs(((dep - app + 540) % 360) - 180); // 0=straight, 180=U-turn
+
+    junctions.push({ pt, angle, idx: i });
+  }
+  return junctions;
+}
+
+// Pick up to maxWp waypoints, prioritising sharpest turns to prevent Google Maps deviation
+function pickWaypoints(route, maxWp) {
+  const junctions = getRouteJunctions(route);
+  if (junctions.length === 0) return [];
+  if (junctions.length <= maxWp) return junctions.map(j => j.pt);
+
+  // Always include the sharpest turns first, then fill with evenly-spaced points
+  const sorted = [...junctions].sort((a, b) => b.angle - a.angle);
+  const picked = new Set(sorted.slice(0, Math.ceil(maxWp * 0.75)).map(j => j.idx));
+
+  // Fill remaining slots with evenly-spaced junctions not already picked
+  const remaining = junctions.filter(j => !picked.has(j.idx));
+  const fillCount = maxWp - picked.size;
+  if (fillCount > 0 && remaining.length > 0) {
+    const step = Math.max(1, Math.floor(remaining.length / fillCount));
+    for (let i = 0; i < remaining.length && picked.size < maxWp; i += step) {
+      picked.add(remaining[i].idx);
+    }
+  }
+
+  // Return in route order
+  return junctions.filter(j => picked.has(j.idx)).map(j => j.pt);
+}
+
 function openInGoogleMaps() {
   if (!S.route) return;
-
-  const { fromWp, toWp, roadSegs } = S.route;
-  const segs = (roadSegs || []).filter(s => s.roadId);
-
-  // Build ordered list of key turn points from route geometry
-  // Google Maps supports origin + up to 8 waypoints + destination (10 total)
-  const turnPoints = [];
-
-  for (let i = 0; i < segs.length; i++) {
-    const g = segGeom(segs[i]);
-    if (!g.length) continue;
-    // The junction between segments is the end of this seg / start of next
-    if (i < segs.length - 1) {
-      const endPt = g[g.length - 1];
-      turnPoints.push(endPt);
-    }
-  }
-
-  // Reduce to max 8 waypoints by picking evenly spaced turns
-  const MAX_WP = 8;
-  let waypoints = turnPoints;
-  if (turnPoints.length > MAX_WP) {
-    const step = (turnPoints.length - 1) / (MAX_WP - 1);
-    waypoints = [];
-    for (let i = 0; i < MAX_WP; i++) {
-      waypoints.push(turnPoints[Math.round(i * step)]);
-    }
-  }
+  const { fromWp, toWp } = S.route;
+  const waypoints = pickWaypoints(S.route, 8);
 
   const origin      = `${fromWp.lat.toFixed(6)},${fromWp.lng.toFixed(6)}`;
   const destination = `${toWp.lat.toFixed(6)},${toWp.lng.toFixed(6)}`;
   const wpStr = waypoints.map(p => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join('|');
 
-  // Build Google Maps URL — works on mobile (opens app) and desktop (opens browser)
   let url = `https://www.google.com/maps/dir/?api=1` +
     `&origin=${origin}` +
     `&destination=${destination}` +
     `&travelmode=driving`;
-
   if (wpStr) url += `&waypoints=${encodeURIComponent(wpStr)}`;
 
   window.open(url, '_blank');
@@ -2318,48 +2341,78 @@ function openInGoogleMaps() {
 
 function openInAppleMaps() {
   if (!S.route) return;
-
-  const { fromWp, toWp, roadSegs } = S.route;
-  const segs = (roadSegs || []).filter(s => s.roadId);
-
-  // Build turn points same as Google Maps
-  const turnPoints = [];
-  for (let i = 0; i < segs.length; i++) {
-    const g = segGeom(segs[i]);
-    if (!g.length) continue;
-    if (i < segs.length - 1) turnPoints.push(g[g.length - 1]);
-  }
-
-  // Apple Maps URL supports origin + destination + up to 8 waypoints
-  const MAX_WP = 8;
-  let waypoints = turnPoints;
-  if (turnPoints.length > MAX_WP) {
-    const step = (turnPoints.length - 1) / (MAX_WP - 1);
-    waypoints = [];
-    for (let i = 0; i < MAX_WP; i++) {
-      waypoints.push(turnPoints[Math.round(i * step)]);
-    }
-  }
+  const { fromWp, toWp } = S.route;
+  const waypoints = pickWaypoints(S.route, 8);
 
   const saddr = `${fromWp.lat.toFixed(6)},${fromWp.lng.toFixed(6)}`;
   const daddr = `${toWp.lat.toFixed(6)},${toWp.lng.toFixed(6)}`;
+  const wpParams = waypoints.map(p => `&daddr=${p[0].toFixed(6)},${p[1].toFixed(6)}`).join('');
 
-  // Apple Maps uses the maps.apple.com URL scheme
-  // On iOS it opens the Maps app; on other devices it opens in browser
-  let url = `https://maps.apple.com/?saddr=${saddr}&daddr=${daddr}&dirflg=d`;
-
-  // Apple Maps doesn't support intermediate waypoints in the URL directly,
-  // so we use the last waypoint as the destination and chain them
-  // Best approach: send origin → first major waypoint → ... → destination
-  // by opening with the full coordinate string in daddr
-  if (waypoints.length > 0) {
-    // Encode waypoints as intermediate stops chained into daddr
-    // Apple Maps supports multiple daddr params for waypoints
-    const wpParams = waypoints.map(p => `&daddr=${p[0].toFixed(6)},${p[1].toFixed(6)}`).join('');
-    url = `https://maps.apple.com/?saddr=${saddr}${wpParams}&daddr=${daddr}&dirflg=d`;
-  }
-
+  const url = `https://maps.apple.com/?saddr=${saddr}${wpParams}&daddr=${daddr}&dirflg=d`;
   window.open(url, '_blank');
+}
+
+function downloadGPX() {
+  if (!S.route) return;
+  const { fromWp, toWp, roadSegs } = S.route;
+  const segs = (roadSegs || []).filter(s => s.roadId);
+
+  // Build full route track — every geometry point of every segment
+  const trackPts = [];
+  // Add origin waypoint
+  trackPts.push([fromWp.lat, fromWp.lng]);
+  for (const seg of segs) {
+    const g = segGeom(seg);
+    for (const pt of g) trackPts.push(pt);
+  }
+  // Add destination waypoint
+  trackPts.push([toWp.lat, toWp.lng]);
+
+  // Collect turn-point waypoints (for apps that show them as stops)
+  const junctions = getRouteJunctions(S.route);
+  const steps = buildNavSteps(S.route).filter(s => s.type === 'step');
+
+  const now = new Date().toISOString();
+  const routeName = `${fromWp.name} to ${toWp.name}`;
+
+  // Build GPX XML
+  let gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="FarmRoute"
+  xmlns="http://www.topografix.com/GPX/1/1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+  <metadata>
+    <name>${escXml(routeName)}</name>
+    <time>${now}</time>
+  </metadata>\n`;
+
+  // Waypoints: origin, each turn, destination
+  gpx += `  <wpt lat="${fromWp.lat.toFixed(6)}" lon="${fromWp.lng.toFixed(6)}"><name>${escXml(fromWp.name)}</name><sym>Flag, Green</sym></wpt>\n`;
+  steps.forEach((s, i) => {
+    const g = s.geometry;
+    if (!g || !g.length) return;
+    const pt = g[0];
+    gpx += `  <wpt lat="${pt[0].toFixed(6)}" lon="${pt[1].toFixed(6)}"><name>${escXml((i+1) + '. ' + s.instruction)}</name><sym>Waypoint</sym></wpt>\n`;
+  });
+  gpx += `  <wpt lat="${toWp.lat.toFixed(6)}" lon="${toWp.lng.toFixed(6)}"><name>${escXml(toWp.name)}</name><sym>Flag, Red</sym></wpt>\n`;
+
+  // Track: full route geometry
+  gpx += `  <trk>\n    <name>${escXml(routeName)}</name>\n    <trkseg>\n`;
+  for (const pt of trackPts) {
+    gpx += `      <trkpt lat="${pt[0].toFixed(6)}" lon="${pt[1].toFixed(6)}"></trkpt>\n`;
+  }
+  gpx += `    </trkseg>\n  </trk>\n</gpx>`;
+
+  // Download
+  const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `farmroute_${fromWp.name.replace(/[^a-z0-9]/gi,'_')}_to_${toWp.name.replace(/[^a-z0-9]/gi,'_')}.gpx`;
+  a.click();
+}
+
+function escXml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 function startNavigation() {
   if (!S.route) return;
