@@ -563,7 +563,17 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
   </div><!-- /sidebar-scroll -->
 
   <div class="legend-bar">
-    <div class="legend-title">Road Permissions</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <div class="legend-title" style="margin-bottom:0">Road Permissions</div>
+      <button id="sat-btn" onclick="toggleSatellite()" style="
+        padding:4px 9px;border:1px solid var(--border);border-radius:4px;
+        background:var(--soil-lighter);color:var(--text-dim);
+        font-family:'Barlow Condensed',sans-serif;font-size:0.7rem;font-weight:700;
+        text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;
+        display:flex;align-items:center;gap:4px;transition:all 0.15s;">
+        🛰 Satellite
+      </button>
+    </div>
     <div class="legend-items">
       <div class="legend-item"><div class="legend-swatch" style="background:var(--road-both)"></div>Both</div>
       <div class="legend-item"><div class="legend-swatch" style="background:var(--road-semi)"></div>Semi Only</div>
@@ -596,6 +606,25 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
     font-family:'Barlow Condensed',sans-serif;font-size:0.85rem;font-weight:800;
     text-transform:uppercase;letter-spacing:1px;color:var(--gold-light);cursor:pointer;
     box-shadow:0 3px 12px rgba(0,0,0,0.5);">☰ Menu</button>
+
+  <!-- GPS location button -->
+  <button id="gps-locate-btn" onclick="toggleGpsLocate()" title="Show my location" style="
+    position:absolute;bottom:80px;right:12px;z-index:1400;
+    width:44px;height:44px;
+    background:var(--soil-mid);border:2px solid var(--border-bright);
+    border-radius:50%;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    font-size:1.2rem;
+    box-shadow:0 3px 12px rgba(0,0,0,0.5);
+    transition:all 0.2s;">📍</button>
+
+  <!-- GPS accuracy badge -->
+  <div id="gps-badge" style="
+    display:none;position:absolute;bottom:130px;right:12px;z-index:1400;
+    background:rgba(10,8,4,0.88);color:#80e080;
+    padding:4px 9px;border-radius:10px;font-size:0.68rem;
+    font-family:'Courier Prime',monospace;border:1px solid #3a6a3a;
+    white-space:nowrap;pointer-events:none;"></div>
 
   <!-- MAP BOTTOM SHEET (mobile classify flow) -->
   <div id="map-sheet">
@@ -2423,9 +2452,15 @@ function startNavigation() {
 
   if (!S.navMap) {
     S.navMap = L.map('nav-leaflet', { zoomControl: true, attributionControl: false }).setView([43.8279, -94.4364], 14);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      attribution: '© CARTO © OpenStreetMap', subdomains: 'abcd', maxZoom: 19
-    }).addTo(S.navMap);
+    // Match current map mode (satellite or road)
+    if (S.satelliteMode) {
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom:19 }).addTo(S.navMap);
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom:19 }).addTo(S.navMap);
+    } else {
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        subdomains: 'abcd', maxZoom: 19
+      }).addTo(S.navMap);
+    }
     S.navRouteLayer = L.layerGroup().addTo(S.navMap);
     S.waypoints.forEach(wp => {
       const ico = L.divIcon({ html: `<div style="font-size:15px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.9))">${WP_ICONS[wp.type]||'📍'}</div>`, iconSize:[18,18], iconAnchor:[9,9], className:'' });
@@ -2708,6 +2743,129 @@ function setImpl(i) {
   clearResult();
   if (debugMode) renderDebugNetwork();
 }
+// ================================================================
+// GPS LOCATE — show user position on main map
+// ================================================================
+let gpsLocateActive = false;
+let gpsLocateWatchId = null;
+let gpsLocateMarker = null;
+let gpsLocatePulse = null;
+let gpsLocateAccCircle = null;
+
+function toggleGpsLocate() {
+  if (gpsLocateActive) {
+    stopGpsLocate();
+  } else {
+    startGpsLocate();
+  }
+}
+
+function startGpsLocate() {
+  if (!navigator.geolocation) {
+    alert('GPS is not available on this device or browser.');
+    return;
+  }
+  gpsLocateActive = true;
+  const btn = document.getElementById('gps-locate-btn');
+  btn.style.background = '#1a3a10';
+  btn.style.borderColor = '#5a9e3e';
+  btn.textContent = '🟢';
+
+  gpsLocateWatchId = navigator.geolocation.watchPosition(
+    onGpsLocatePos,
+    onGpsLocateErr,
+    { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 }
+  );
+}
+
+function stopGpsLocate() {
+  gpsLocateActive = false;
+  if (gpsLocateWatchId !== null) {
+    navigator.geolocation.clearWatch(gpsLocateWatchId);
+    gpsLocateWatchId = null;
+  }
+  if (gpsLocateMarker) { map.removeLayer(gpsLocateMarker); gpsLocateMarker = null; }
+  if (gpsLocatePulse)  { map.removeLayer(gpsLocatePulse);  gpsLocatePulse = null; }
+  if (gpsLocateAccCircle) { map.removeLayer(gpsLocateAccCircle); gpsLocateAccCircle = null; }
+  const btn = document.getElementById('gps-locate-btn');
+  btn.style.background = '';
+  btn.style.borderColor = '';
+  btn.textContent = '📍';
+  document.getElementById('gps-badge').style.display = 'none';
+}
+
+function onGpsLocatePos(pos) {
+  const lat = pos.coords.latitude;
+  const lng = pos.coords.longitude;
+  const acc = pos.coords.accuracy; // metres
+
+  // Update accuracy badge
+  const badge = document.getElementById('gps-badge');
+  badge.style.display = 'block';
+  badge.textContent = `±${Math.round(acc)}m`;
+
+  // Create or move pulse ring
+  const pulseIcon = L.divIcon({
+    html: '<div class="gps-pulse"></div>',
+    iconSize: [38, 38], iconAnchor: [19, 19], className: ''
+  });
+  const dotIcon = L.divIcon({
+    html: '<div class="gps-dot"></div>',
+    iconSize: [14, 14], iconAnchor: [7, 7], className: ''
+  });
+
+  if (!gpsLocatePulse) {
+    gpsLocatePulse  = L.marker([lat, lng], { icon: pulseIcon, zIndexOffset: 1000 }).addTo(map);
+    gpsLocateMarker = L.marker([lat, lng], { icon: dotIcon,   zIndexOffset: 1001 }).addTo(map);
+    // Fly to location on first fix
+    map.flyTo([lat, lng], Math.max(map.getZoom(), 15), { duration: 1 });
+  } else {
+    gpsLocatePulse.setLatLng([lat, lng]);
+    gpsLocateMarker.setLatLng([lat, lng]);
+  }
+
+  // Accuracy circle
+  if (gpsLocateAccCircle) map.removeLayer(gpsLocateAccCircle);
+  gpsLocateAccCircle = L.circle([lat, lng], {
+    radius: acc,
+    color: '#4af', weight: 1, opacity: 0.4,
+    fillColor: '#4af', fillOpacity: 0.07
+  }).addTo(map);
+
+  // Update button to show tracking is active
+  const btn = document.getElementById('gps-locate-btn');
+  btn.title = `GPS active — tap to stop\n${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+}
+
+function onGpsLocateErr(err) {
+  const msgs = { 1:'Location permission denied', 2:'Position unavailable', 3:'GPS timed out' };
+  stopGpsLocate();
+  setStatus('warn', `📡 ${msgs[err.code] || 'GPS error'} — check browser location permissions`);
+}
+
+function toggleSatellite() {
+  S.satelliteMode = !S.satelliteMode;
+  const btn = document.getElementById('sat-btn');
+
+  if (S.satelliteMode) {
+    map.removeLayer(S.baseLayers.road);
+    S.baseLayers.satellite.addTo(map);
+    S.baseLayers.satelliteLabels.addTo(map);
+    btn.style.background = '#1a3a10';
+    btn.style.color = '#80e060';
+    btn.style.borderColor = '#3a7a20';
+    btn.textContent = '🗺 Road Map';
+  } else {
+    map.removeLayer(S.baseLayers.satellite);
+    map.removeLayer(S.baseLayers.satelliteLabels);
+    S.baseLayers.road.addTo(map);
+    btn.style.background = '';
+    btn.style.color = '';
+    btn.style.borderColor = '';
+    btn.textContent = '🛰 Satellite';
+  }
+}
+
 function showHint(txt) { const h = document.getElementById('map-hint'); h.textContent = txt; h.style.display = 'block'; }
 function hideHint() { document.getElementById('map-hint').style.display = 'none'; }
 
@@ -2907,10 +3065,23 @@ async function persist() {
 window.addEventListener('load', async () => {
   // Init map first (it renders even before login)
   map = L.map('map', { zoomControl: true }).setView([43.8279, -94.4364], 14);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-    attribution: '© <a href="https://carto.com/">CARTO</a> © <a href="https://openstreetmap.org">OpenStreetMap</a>',
-    subdomains: 'abcd', maxZoom: 19
-  }).addTo(map);
+
+  // Base tile layers
+  S.baseLayers = {
+    road: L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      attribution: '© <a href="https://carto.com/">CARTO</a> © <a href="https://openstreetmap.org">OpenStreetMap</a>',
+      subdomains: 'abcd', maxZoom: 19
+    }),
+    satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: '© <a href="https://www.esri.com/">Esri</a>, Maxar, Earthstar Geographics',
+      maxZoom: 19
+    }),
+    satelliteLabels: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+      attribution: '', maxZoom: 19, opacity: 1
+    })
+  };
+  S.satelliteMode = false;
+  S.baseLayers.road.addTo(map);
 
   S.osmRoadLayers   = L.layerGroup().addTo(map);
   S.routeLayer      = L.layerGroup().addTo(map);
