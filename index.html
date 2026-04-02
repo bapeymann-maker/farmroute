@@ -2413,58 +2413,89 @@ function openInOsmAnd() {
   const { fromWp, toWp } = S.route;
   const waypoints = pickWaypoints(S.route, 8);
 
-  // OsmAnd supports two URL schemes:
-  // 1. osmand.navigation — deep link into the app with route
-  // 2. geo: URI — universal fallback that OsmAnd intercepts on Android
-  // 3. http://osmand.net/go — web fallback that OsmAnd app catches
-
-  // Build OsmAnd navigation deep link
-  // Format: osmand.navigation://route?
-  //   start_lat=...&start_lon=...&
-  //   dest_lat=...&dest_lon=...&dest_name=...&
-  //   via_lat[0]=...&via_lon[0]=...&
-  //   profile=driving
-  const sl = fromWp.lat.toFixed(6);
-  const slo = fromWp.lng.toFixed(6);
-  const dl = toWp.lat.toFixed(6);
-  const dlo = toWp.lng.toFixed(6);
-
-  let params = `start_lat=${sl}&start_lon=${slo}` +
-    `&dest_lat=${dl}&dest_lon=${dlo}` +
-    `&dest_name=${encodeURIComponent(toWp.name)}` +
-    `&start_name=${encodeURIComponent(fromWp.name)}` +
-    `&profile=driving`;
-
-  waypoints.forEach((pt, i) => {
-    params += `&via_lat[${i}]=${pt[0].toFixed(6)}&via_lon[${i}]=${pt[1].toFixed(6)}`;
-  });
-
-  const osmandUrl = `osmand.navigation://route?${params}`;
-
-  // Try the deep link first — if OsmAnd is installed it opens directly
-  // If not installed, fall back to osmand.net which shows install page
-  const fallbackUrl = `https://osmand.net/go?lat=${dl}&lon=${dlo}&z=12`;
-
-  // On Android the intent:// scheme is more reliable for deep linking
-  const intentUrl = `intent://route?${params}#Intent;scheme=osmand.navigation;package=net.osmand;S.browser_fallback_url=${encodeURIComponent(fallbackUrl)};end`;
-
-  // Detect platform
   const isAndroid = /android/i.test(navigator.userAgent);
   const isIOS     = /iphone|ipad|ipod/i.test(navigator.userAgent);
 
   if (isAndroid) {
-    window.location.href = intentUrl;
+    // Android: build a GPX file, encode it as base64 data URI,
+    // and use OsmAnd's documented gpx intent to open it directly
+    const gpxContent = buildGpxString(fromWp, toWp, waypoints);
+    const b64 = btoa(unescape(encodeURIComponent(gpxContent)));
+    const dataUri = 'data:application/gpx+xml;base64,' + b64;
+
+    // OsmAnd Android intent with GPX data URI
+    // This is the most reliable method per OsmAnd docs
+    const intentUrl =
+      `intent://show_gpx?url=${encodeURIComponent(dataUri)}` +
+      `#Intent;scheme=osmand.api;package=net.osmand;` +
+      `S.browser_fallback_url=${encodeURIComponent('https://osmand.net/go?lat=' + toWp.lat + '&lon=' + toWp.lng + '&z=12')};end`;
+
+    // Also try the simpler navigate intent as primary
+    // OsmAnd supports: osmand.navigation://route?start_lat=...&start_lon=...&dest_lat=...&dest_lon=...
+    const sl = fromWp.lat.toFixed(6), slo = fromWp.lng.toFixed(6);
+    const dl = toWp.lat.toFixed(6),   dlo = toWp.lng.toFixed(6);
+
+    let navParams = `start_lat=${sl}&start_lon=${slo}&start_name=${encodeURIComponent(fromWp.name)}` +
+      `&dest_lat=${dl}&dest_lon=${dlo}&dest_name=${encodeURIComponent(toWp.name)}&profile=car`;
+
+    waypoints.forEach((pt, i) => {
+      navParams += `&via[${i}]=${pt[0].toFixed(6)},${pt[1].toFixed(6)}`;
+    });
+
+    const navIntent =
+      `intent://route?${navParams}` +
+      `#Intent;scheme=osmand.navigation;package=net.osmand;` +
+      `S.browser_fallback_url=${encodeURIComponent('https://play.google.com/store/apps/details?id=net.osmand')};end`;
+
+    window.location.href = navIntent;
+
   } else if (isIOS) {
-    // iOS OsmAnd uses the osmandmaps:// scheme
-    const iosUrl = `osmandmaps://navigate?lat=${dl}&lon=${dlo}&name=${encodeURIComponent(toWp.name)}`;
+    // iOS OsmAnd uses osmandmaps:// scheme
+    // Navigate to destination — iOS doesn't support full route waypoints via URL
+    const dl  = toWp.lat.toFixed(6);
+    const dlo = toWp.lng.toFixed(6);
+    const sl  = fromWp.lat.toFixed(6);
+    const slo = fromWp.lng.toFixed(6);
+
+    // Try full route URL first
+    const iosUrl = `osmandmaps://navigate?` +
+      `start_lat=${sl}&start_lon=${slo}&start_name=${encodeURIComponent(fromWp.name)}` +
+      `&dest_lat=${dl}&dest_lon=${dlo}&dest_name=${encodeURIComponent(toWp.name)}` +
+      `&profile=car&force=true`;
+
     window.location.href = iosUrl;
-    // Fallback if not installed
-    setTimeout(() => { window.open('https://apps.apple.com/app/osmand-maps-travel-navigate/id934850257', '_blank'); }, 2000);
+
+    // If OsmAnd not installed, redirect to App Store after 2s
+    setTimeout(() => {
+      window.open('https://apps.apple.com/app/osmand-maps-travel-navigate/id934850257', '_blank');
+    }, 2000);
+
   } else {
-    // Desktop — just open osmand.net
-    window.open(fallbackUrl, '_blank');
-    alert('OsmAnd is a mobile app. Open FarmRoute on your phone and tap this button to launch OsmAnd directly.');
+    // Desktop — offer GPX download instead
+    downloadGPX();
+    alert('OsmAnd is a mobile app. The GPX file has been downloaded — you can import it into OsmAnd via Menu → My Places → Tracks → Import.');
   }
+}
+
+// Build a minimal GPX string for the route waypoints
+function buildGpxString(fromWp, toWp, waypoints) {
+  const now = new Date().toISOString();
+  const allPts = [
+    { lat: fromWp.lat, lng: fromWp.lng, name: fromWp.name },
+    ...waypoints.map((p, i) => ({ lat: p[0], lng: p[1], name: `Waypoint ${i+1}` })),
+    { lat: toWp.lat,   lng: toWp.lng,   name: toWp.name }
+  ];
+
+  let gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="FarmRoute" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><time>${now}</time></metadata>\n`;
+
+  allPts.forEach(pt => {
+    gpx += `  <wpt lat="${pt.lat.toFixed(6)}" lon="${pt.lng.toFixed(6)}"><name>${escXml(pt.name)}</name></wpt>\n`;
+  });
+
+  gpx += `</gpx>`;
+  return gpx;
 }
 
 function downloadGPX() {
