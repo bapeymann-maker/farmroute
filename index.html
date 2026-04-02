@@ -484,14 +484,20 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
 
       </div>
 
-      <!-- LOCATIONS -->
-      <div class="sec-hdr"><span class="sec-label">📍 Locations</span></div>
+      <!-- LOCATIONS (collapsible) -->
+      <div class="sec-hdr" style="cursor:pointer" onclick="toggleSection('wp-list','wp-chevron')">
+        <span class="sec-label">📍 Locations</span>
+        <span id="wp-chevron" style="color:var(--text-muted);font-size:0.7rem;transition:transform 0.2s">▼</span>
+      </div>
       <div id="wp-list"></div>
 
-      <!-- APPROVED ROADS -->
-      <div class="sec-hdr">
+      <!-- APPROVED ROADS (collapsible) -->
+      <div class="sec-hdr" style="cursor:pointer" onclick="toggleSection('road-list','road-chevron')">
         <span class="sec-label">✅ Approved Roads</span>
-        <span id="road-count" style="font-family:'Courier Prime',monospace;font-size:0.68rem;color:var(--text-muted)">0 roads</span>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span id="road-count" style="font-family:'Courier Prime',monospace;font-size:0.68rem;color:var(--text-muted)">0 roads</span>
+          <span id="road-chevron" style="color:var(--text-muted);font-size:0.7rem;transition:transform 0.2s">▼</span>
+        </div>
       </div>
       <div id="road-list"></div>
 
@@ -538,8 +544,18 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
         </div>
       </div>
       <div class="sec-hdr"><span class="sec-label">Origin & Destination</span></div>
-      <div class="field"><label class="field-label">Starting From</label>
-        <select class="field-select" id="rt-from" onchange="clearResult()"><option value="">— Select location —</option></select></div>
+      <div class="field">
+        <label class="field-label">Starting From</label>
+        <div style="display:flex;gap:5px;align-items:center">
+          <select class="field-select" id="rt-from" onchange="clearResult()" style="flex:1"></select>
+          <button id="use-gps-btn" onclick="useCurrentLocationAsOrigin()" title="Use current GPS location" style="
+            flex-shrink:0;width:36px;height:36px;border-radius:6px;
+            background:var(--card-bg);border:1px solid var(--border);
+            cursor:pointer;font-size:1rem;display:flex;align-items:center;
+            justify-content:center;transition:all 0.15s;" title="Use my current location">📍</button>
+        </div>
+        <div id="gps-origin-badge" style="display:none;margin-top:3px;font-size:0.68rem;color:#80e080;font-family:'Courier Prime',monospace;"></div>
+      </div>
       <div class="field"><label class="field-label">Going To</label>
         <select class="field-select" id="rt-to" onchange="clearResult()"><option value="">— Select location —</option></select></div>
       <button class="btn btn-gold btn-block" onclick="findRoute()">🔍 Find Best Route</button>
@@ -2015,7 +2031,9 @@ function findRoute() {
   const allowed = S.approvedRoads.filter(r => isRoadAllowed(r, v, c));
   if (allowed.length === 0) return showErr('No approved roads for this vehicle/load type.<br>Go to Admin Setup and approve some roads first.');
 
-  const fromWp = S.waypoints.find(w => w.id === fromId);
+  const fromWp = fromId === 'gps_current' && gpsOriginWp
+    ? gpsOriginWp
+    : S.waypoints.find(w => w.id === fromId);
   const toWp   = S.waypoints.find(w => w.id === toId);
 
   // Snap waypoints to nearest point on any approved road FIRST
@@ -2692,9 +2710,14 @@ function quickDeleteRoad(id) {
 }
 
 function refreshRouteSelects() {
-  const opts = '<option value="">— Select location —</option>' + S.waypoints.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
+  const gpsOpt = gpsOriginWp
+    ? `<option value="gps_current">📍 Current Location</option>`
+    : '';
+  const opts = '<option value="">— Select location —</option>' + gpsOpt +
+    S.waypoints.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
   document.getElementById('rt-from').innerHTML = opts;
-  document.getElementById('rt-to').innerHTML = opts;
+  document.getElementById('rt-to').innerHTML = '<option value="">— Select location —</option>' +
+    S.waypoints.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
 }
 
 // ================================================================
@@ -2744,8 +2767,76 @@ function setImpl(i) {
   if (debugMode) renderDebugNetwork();
 }
 // ================================================================
-// GPS LOCATE — show user position on main map
+// COLLAPSIBLE SECTIONS
 // ================================================================
+const sectionCollapsed = {};
+function toggleSection(listId, chevronId) {
+  sectionCollapsed[listId] = !sectionCollapsed[listId];
+  const el = document.getElementById(listId);
+  const ch = document.getElementById(chevronId);
+  if (sectionCollapsed[listId]) {
+    el.style.display = 'none';
+    if (ch) ch.style.transform = 'rotate(-90deg)';
+  } else {
+    el.style.display = '';
+    if (ch) ch.style.transform = '';
+  }
+}
+
+// ================================================================
+// USE CURRENT LOCATION AS ROUTE ORIGIN
+// ================================================================
+let gpsOriginWp = null; // virtual waypoint for current location
+
+function useCurrentLocationAsOrigin() {
+  if (!navigator.geolocation) {
+    alert('GPS not available on this device.');
+    return;
+  }
+  const btn = document.getElementById('use-gps-btn');
+  btn.textContent = '⏳';
+  btn.style.color = 'var(--gold)';
+
+  navigator.geolocation.getCurrentPosition(pos => {
+    const lat = pos.coords.latitude;
+    const lng = pos.coords.longitude;
+    const acc = Math.round(pos.coords.accuracy);
+
+    // Create a virtual "Current Location" waypoint (not saved)
+    gpsOriginWp = { id: 'gps_current', name: 'Current Location', type: 'other', lat, lng };
+
+    // Add/update in the dropdown
+    const sel = document.getElementById('rt-from');
+    let opt = sel.querySelector('option[value="gps_current"]');
+    if (!opt) {
+      opt = document.createElement('option');
+      opt.value = 'gps_current';
+      sel.insertBefore(opt, sel.options[1]); // insert after "select" placeholder
+    }
+    opt.textContent = `📍 Current Location (±${acc}m)`;
+    sel.value = 'gps_current';
+
+    // Show badge
+    document.getElementById('gps-origin-badge').style.display = 'block';
+    document.getElementById('gps-origin-badge').textContent = `📍 ${lat.toFixed(5)}, ${lng.toFixed(5)} · ±${acc}m`;
+
+    // Also show dot on map
+    if (!gpsLocateMarker) startGpsLocate();
+
+    btn.textContent = '✓';
+    btn.style.background = '#1a3a10';
+    btn.style.borderColor = '#5a9e3e';
+    btn.style.color = '#80e080';
+    clearResult();
+
+    setTimeout(() => { btn.textContent = '📍'; btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = ''; }, 3000);
+  }, err => {
+    btn.textContent = '📍';
+    btn.style.color = '';
+    const msgs = { 1:'Location permission denied', 2:'Position unavailable', 3:'Timed out' };
+    alert(`Could not get location: ${msgs[err.code] || 'Unknown error'}. Check your browser location permissions.`);
+  }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 });
+}
 let gpsLocateActive = false;
 let gpsLocateWatchId = null;
 let gpsLocateMarker = null;
