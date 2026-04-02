@@ -560,16 +560,8 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
         <select class="field-select" id="rt-to" onchange="clearResult()"><option value="">— Select location —</option></select></div>
       <button class="btn btn-gold btn-block" onclick="findRoute()">🔍 Find Best Route</button>
       <div id="nav-btns" style="display:none">
-        <button class="btn btn-block btn-gap" id="gmaps-btn" onclick="openInGoogleMaps()" style="background:#4285f4;color:#fff;border-color:#4285f4;font-size:0.95rem;padding:12px;justify-content:center;width:100%">
-          <svg style="width:18px;height:18px;margin-right:6px;flex-shrink:0" viewBox="0 0 24 24" fill="white"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
-          Open in Google Maps
-        </button>
-        <button class="btn btn-block btn-gap" id="amaps-btn" onclick="openInAppleMaps()" style="background:#000;color:#fff;border-color:#333;font-size:0.95rem;padding:12px;justify-content:center;width:100%">
-          <svg style="width:18px;height:18px;margin-right:6px;flex-shrink:0" viewBox="0 0 24 24" fill="white"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
-          Open in Apple Maps
-        </button>
-        <button class="btn btn-block btn-gap" id="gpx-btn" onclick="downloadGPX()" style="background:#2a6b3a;color:#fff;border-color:#2a6b3a;font-size:0.95rem;padding:12px;justify-content:center;width:100%">
-          📥 Download GPX Route File
+        <button class="btn btn-block btn-gap" id="osmand-btn" onclick="openInOsmAnd()" style="background:#6d4c41;color:#fff;border-color:#6d4c41;font-size:0.95rem;padding:12px;justify-content:center;width:100%">
+          🗺 Open in OsmAnd
         </button>
         <button class="btn btn-ghost btn-block btn-gap" id="start-nav-btn" onclick="startNavigation()" style="font-size:0.8rem;padding:8px;justify-content:center;width:100%">▶ Built-in Navigation (basic)</button>
       </div>
@@ -2076,28 +2068,56 @@ function findRoute() {
   if (!startInGraph) return showErr(`Could not connect "${fromWp.name}" to the road network.<br><small>Snap road: ${fromSnap.road.name}, dist along: ${fromD.toFixed(4)}km</small>`);
   if (!endInGraph)   return showErr(`Could not connect "${toWp.name}" to the road network.<br><small>Snap road: ${toSnap.road.name}, dist along: ${toD.toFixed(4)}km</small>`);
 
-  // Dijkstra
-  const dist = {}, prev = {}, vis = new Set();
-  allNodes.forEach(n => dist[n] = Infinity);
-  dist[startKey] = 0;
-  const pq = [{ id:startKey, d:0 }];
+  // Edge-state Dijkstra: state = "node|incomingRoadId|incomingFwd"
+  // This prevents U-turns by tracking which road+direction we arrived on
+  // and blocking the reverse of that same road at each node.
+  const startState = `${startKey}||`;
+  const endPrefix  = `${endKey}|`;
+
+  const dist = {}, prev = {};
+  dist[startState] = 0;
+  const pq = [{ state: startState, d: 0 }];
+
   while (pq.length) {
     pq.sort((a,b) => a.d - b.d);
-    const { id:cur } = pq.shift();
-    if (vis.has(cur)) continue;
-    vis.add(cur);
-    if (cur === endKey) break;
-    for (const e of (G[cur]||[])) {
-      const nd = dist[cur]+e.dist;
-      if (nd < dist[e.to]) {
-        dist[e.to] = nd;
-        prev[e.to] = { from:cur, roadId:e.roadId, fwd:e.fwd, sd:e.sd, ed:e.ed };
-        pq.push({ id:e.to, d:nd });
+    const { state: curState, d: curD } = pq.shift();
+    if (curD > (dist[curState] ?? Infinity)) continue; // stale
+
+    const pipeA = curState.indexOf('|');
+    const curNode = curState.slice(0, pipeA);
+    const rest = curState.slice(pipeA + 1);
+    const pipeB = rest.indexOf('|');
+    const inRoadId = rest.slice(0, pipeB);
+    const inFwd    = rest.slice(pipeB + 1);
+
+    if (curNode === endKey) break;
+
+    for (const e of (G[curNode] || [])) {
+      // Block U-turn: same road, opposite direction
+      if (e.roadId && e.roadId === inRoadId) {
+        const eFwdStr = String(e.fwd);
+        if (eFwdStr !== inFwd) continue; // reversal on same road = U-turn, skip
+      }
+
+      const nd = curD + e.dist;
+      const nextState = `${e.to}|${e.roadId||''}|${e.fwd}`;
+      if (nd < (dist[nextState] ?? Infinity)) {
+        dist[nextState] = nd;
+        prev[nextState] = { fromState: curState, roadId: e.roadId, fwd: e.fwd, sd: e.sd, ed: e.ed };
+        pq.push({ state: nextState, d: nd });
       }
     }
   }
 
-  if (!isFinite(dist[endKey])) {
+  // Find best end state (lowest cost state that starts with endKey)
+  let bestEndState = null, bestEndDist = Infinity;
+  for (const [state, d] of Object.entries(dist)) {
+    if (state.startsWith(endPrefix) && d < bestEndDist) {
+      bestEndDist = d; bestEndState = state;
+    }
+  }
+
+  if (!bestEndState) {
     // Directed BFS to find how many nodes are reachable from start
     const reachable = new Set();
     const bfsQ = [startKey];
@@ -2108,7 +2128,6 @@ function findRoute() {
       for (const e of (G[n] || [])) { if (!reachable.has(e.to)) bfsQ.push(e.to); }
     }
 
-    // Check reverse: can we reach startKey from endKey?
     const reverseReachable = new Set();
     const bfsR = [endKey];
     while (bfsR.length) {
@@ -2133,9 +2152,7 @@ function findRoute() {
     if (!debugMode) toggleDebugMode();
     renderDebugNetwork(fromWp.lat, fromWp.lng);
 
-    // Find one-way roads in the allowed set
     const oneWayRoads = allowed.filter(r => r.oneWay).map(r => r.name);
-
     let msg = `No connected route between these points.<br>`;
     if (!endReachableFromStart && startReachableFromEnd) {
       msg += `<b>⚠ One-way roads are blocking this direction.</b><br>` +
@@ -2150,12 +2167,17 @@ function findRoute() {
     return showErr(msg);
   }
 
+  // Reconstruct path from edge-state prev chain
   const roadSegs = [];
-  let cur = endKey;
-  while (prev[cur]) { roadSegs.unshift({ roadId:prev[cur].roadId, fwd:prev[cur].fwd, sd:prev[cur].sd, ed:prev[cur].ed }); cur = prev[cur].from; }
+  let curState = bestEndState;
+  while (prev[curState]) {
+    const p = prev[curState];
+    roadSegs.unshift({ roadId: p.roadId, fwd: p.fwd, sd: p.sd, ed: p.ed });
+    curState = p.fromState;
+  }
   const dedupedSegs = roadSegs.filter((s,i) => !s.roadId || i===0 || s.roadId!==roadSegs[i-1].roadId || Math.abs((s.sd||0)-(roadSegs[i-1].sd||0)) > 0.001);
 
-  S.route = { roadSegs:dedupedSegs, roadIds:dedupedSegs.map(s=>s.roadId), fromWp, toWp, km:dist[endKey] };
+  S.route = { roadSegs:dedupedSegs, roadIds:dedupedSegs.map(s=>s.roadId), fromWp, toWp, km:bestEndDist };
   drawRouteOnMap(S.route);
   showRouteResult(S.route);
   document.getElementById('nav-btns').style.display = 'block';
@@ -2386,17 +2408,63 @@ function openInGoogleMaps() {
   window.open(url, '_blank');
 }
 
-function openInAppleMaps() {
+function openInOsmAnd() {
   if (!S.route) return;
   const { fromWp, toWp } = S.route;
   const waypoints = pickWaypoints(S.route, 8);
 
-  const saddr = `${fromWp.lat.toFixed(6)},${fromWp.lng.toFixed(6)}`;
-  const daddr = `${toWp.lat.toFixed(6)},${toWp.lng.toFixed(6)}`;
-  const wpParams = waypoints.map(p => `&daddr=${p[0].toFixed(6)},${p[1].toFixed(6)}`).join('');
+  // OsmAnd supports two URL schemes:
+  // 1. osmand.navigation — deep link into the app with route
+  // 2. geo: URI — universal fallback that OsmAnd intercepts on Android
+  // 3. http://osmand.net/go — web fallback that OsmAnd app catches
 
-  const url = `https://maps.apple.com/?saddr=${saddr}${wpParams}&daddr=${daddr}&dirflg=d`;
-  window.open(url, '_blank');
+  // Build OsmAnd navigation deep link
+  // Format: osmand.navigation://route?
+  //   start_lat=...&start_lon=...&
+  //   dest_lat=...&dest_lon=...&dest_name=...&
+  //   via_lat[0]=...&via_lon[0]=...&
+  //   profile=driving
+  const sl = fromWp.lat.toFixed(6);
+  const slo = fromWp.lng.toFixed(6);
+  const dl = toWp.lat.toFixed(6);
+  const dlo = toWp.lng.toFixed(6);
+
+  let params = `start_lat=${sl}&start_lon=${slo}` +
+    `&dest_lat=${dl}&dest_lon=${dlo}` +
+    `&dest_name=${encodeURIComponent(toWp.name)}` +
+    `&start_name=${encodeURIComponent(fromWp.name)}` +
+    `&profile=driving`;
+
+  waypoints.forEach((pt, i) => {
+    params += `&via_lat[${i}]=${pt[0].toFixed(6)}&via_lon[${i}]=${pt[1].toFixed(6)}`;
+  });
+
+  const osmandUrl = `osmand.navigation://route?${params}`;
+
+  // Try the deep link first — if OsmAnd is installed it opens directly
+  // If not installed, fall back to osmand.net which shows install page
+  const fallbackUrl = `https://osmand.net/go?lat=${dl}&lon=${dlo}&z=12`;
+
+  // On Android the intent:// scheme is more reliable for deep linking
+  const intentUrl = `intent://route?${params}#Intent;scheme=osmand.navigation;package=net.osmand;S.browser_fallback_url=${encodeURIComponent(fallbackUrl)};end`;
+
+  // Detect platform
+  const isAndroid = /android/i.test(navigator.userAgent);
+  const isIOS     = /iphone|ipad|ipod/i.test(navigator.userAgent);
+
+  if (isAndroid) {
+    window.location.href = intentUrl;
+  } else if (isIOS) {
+    // iOS OsmAnd uses the osmandmaps:// scheme
+    const iosUrl = `osmandmaps://navigate?lat=${dl}&lon=${dlo}&name=${encodeURIComponent(toWp.name)}`;
+    window.location.href = iosUrl;
+    // Fallback if not installed
+    setTimeout(() => { window.open('https://apps.apple.com/app/osmand-maps-travel-navigate/id934850257', '_blank'); }, 2000);
+  } else {
+    // Desktop — just open osmand.net
+    window.open(fallbackUrl, '_blank');
+    alert('OsmAnd is a mobile app. Open FarmRoute on your phone and tap this button to launch OsmAnd directly.');
+  }
 }
 
 function downloadGPX() {
