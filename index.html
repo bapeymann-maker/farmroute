@@ -546,7 +546,7 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
           <div class="search-select" id="from-wrap" style="flex:1">
             <input class="search-select-input" id="rt-from-input" placeholder="— Search locations —" autocomplete="off"
               oninput="filterSearchSelect('from')" onfocus="openSearchSelect('from')" onblur="closeSearchSelect('from')" readonly>
-            <div class="search-select-dropdown" id="rt-from-dropdown" onmousedown="event.preventDefault()"></div>
+            <div class="search-select-dropdown" id="rt-from-dropdown"></div>
             <input type="hidden" id="rt-from">
           </div>
           <button id="use-gps-btn" onclick="useCurrentLocationAsOrigin()" title="Use my current location" style="
@@ -562,7 +562,7 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
         <div class="search-select" id="to-wrap">
           <input class="search-select-input" id="rt-to-input" placeholder="— Search locations —" autocomplete="off"
             oninput="filterSearchSelect('to')" onfocus="openSearchSelect('to')" onblur="closeSearchSelect('to')" readonly>
-          <div class="search-select-dropdown" id="rt-to-dropdown" onmousedown="event.preventDefault()"></div>
+          <div class="search-select-dropdown" id="rt-to-dropdown"></div>
           <input type="hidden" id="rt-to">
         </div>
       </div>
@@ -2875,15 +2875,28 @@ function renderSearchDropdown(which) {
     return;
   }
   dd.innerHTML = items.map(i =>
-    `<div class="search-select-option" onmousedown="selectSearchOption('${which}','${i.id}',${JSON.stringify(i.name)})">${i.name}</div>`
+    `<div class="search-select-option" data-id="${i.id}" data-name="${i.name.replace(/"/g,'&quot;')}">${i.name}</div>`
   ).join('');
+
+  // Attach events directly to each option node — works on mobile and desktop
+  dd.querySelectorAll('.search-select-option[data-id]').forEach(el => {
+    const pick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      selectSearchOption(which, el.dataset.id, el.dataset.name);
+    };
+    el.addEventListener('mousedown', pick);
+    el.addEventListener('touchstart', pick, { passive: false });
+  });
 }
 
 function selectSearchOption(which, id, name) {
   document.getElementById(`rt-${which}`).value = id;
   document.getElementById(`rt-${which}-input`).value = name;
+  document.getElementById(`rt-${which}-input`).readOnly = true;
   document.getElementById(`rt-${which}-dropdown`).classList.remove('open');
   ssState[which].open = false;
+  document.getElementById(`rt-${which}-input`).blur();
   clearResult();
 }
 
