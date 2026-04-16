@@ -131,6 +131,15 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
 .field-input,.field-select,.field-textarea{width:100%;padding:7px 9px;background:var(--input-bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.85rem;font-family:'Barlow',sans-serif;transition:border-color 0.15s;}
 .field-input:focus,.field-select:focus{outline:none;border-color:var(--gold);}
 .field-select option{background:var(--soil-mid);}
+.search-select{position:relative;width:100%;}
+.search-select-input{width:100%;padding:7px 9px;background:var(--input-bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.85rem;font-family:'Barlow',sans-serif;cursor:pointer;box-sizing:border-box;transition:border-color 0.15s;}
+.search-select-input:focus{outline:none;border-color:var(--gold);cursor:text;}
+.search-select-dropdown{display:none;position:absolute;top:100%;left:0;right:0;z-index:3000;background:var(--soil-mid);border:1px solid var(--border-bright);border-radius:6px;max-height:220px;overflow-y:auto;box-shadow:0 6px 24px rgba(0,0,0,0.5);margin-top:2px;}
+.search-select-dropdown.open{display:block;}
+.search-select-option{padding:9px 12px;font-family:'Barlow Condensed',sans-serif;font-size:0.88rem;color:var(--text-bright);cursor:pointer;border-bottom:1px solid var(--border);}
+.search-select-option:last-child{border-bottom:none;}
+.search-select-option:hover,.search-select-option.highlighted{background:var(--soil-lighter);color:var(--gold-light);}
+.search-select-option.empty{color:var(--text-muted);font-style:italic;cursor:default;}
 .field-textarea{resize:vertical;min-height:46px;}
 .check-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px;}
 .check-item{display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--card-bg);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.77rem;}
@@ -547,23 +556,38 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
       <div class="field">
         <label class="field-label">Starting From</label>
         <div style="display:flex;gap:5px;align-items:center">
-          <select class="field-select" id="rt-from" onchange="clearResult()" style="flex:1"></select>
-          <button id="use-gps-btn" onclick="useCurrentLocationAsOrigin()" title="Use current GPS location" style="
+          <div class="search-select" id="from-wrap" style="flex:1">
+            <input class="search-select-input" id="rt-from-input" placeholder="— Search locations —" autocomplete="off"
+              oninput="filterSearchSelect('from')" onfocus="openSearchSelect('from')" onblur="closeSearchSelect('from',300)" readonly>
+            <div class="search-select-dropdown" id="rt-from-dropdown"></div>
+            <input type="hidden" id="rt-from">
+          </div>
+          <button id="use-gps-btn" onclick="useCurrentLocationAsOrigin()" title="Use my current location" style="
             flex-shrink:0;width:36px;height:36px;border-radius:6px;
             background:var(--card-bg);border:1px solid var(--border);
             cursor:pointer;font-size:1rem;display:flex;align-items:center;
-            justify-content:center;transition:all 0.15s;" title="Use my current location">📍</button>
+            justify-content:center;transition:all 0.15s;">📍</button>
         </div>
         <div id="gps-origin-badge" style="display:none;margin-top:3px;font-size:0.68rem;color:#80e080;font-family:'Courier Prime',monospace;"></div>
       </div>
-      <div class="field"><label class="field-label">Going To</label>
-        <select class="field-select" id="rt-to" onchange="clearResult()"><option value="">— Select location —</option></select></div>
+      <div class="field">
+        <label class="field-label">Going To</label>
+        <div class="search-select" id="to-wrap">
+          <input class="search-select-input" id="rt-to-input" placeholder="— Search locations —" autocomplete="off"
+            oninput="filterSearchSelect('to')" onfocus="openSearchSelect('to')" onblur="closeSearchSelect('to',300)" readonly>
+          <div class="search-select-dropdown" id="rt-to-dropdown"></div>
+          <input type="hidden" id="rt-to">
+        </div>
+      </div>
       <button class="btn btn-gold btn-block" onclick="findRoute()">🔍 Find Best Route</button>
       <div id="nav-btns" style="display:none">
-        <button class="btn btn-block btn-gap" id="gpx-btn" onclick="downloadGPX()" style="background:#2a6b3a;color:#fff;border-color:#2a6b3a;font-size:0.95rem;padding:12px;justify-content:center;width:100%">
-          📥 Download GPX Route File
-        </button>
-        <button class="btn btn-ghost btn-block btn-gap" id="start-nav-btn" onclick="startNavigation()" style="font-size:0.8rem;padding:8px;justify-content:center;width:100%">▶ Built-in Navigation (basic)</button>
+        <button class="btn btn-ghost btn-block btn-gap" onclick="clearRoute()" style="font-size:0.9rem;padding:10px;justify-content:center;width:100%">✕ Clear Route</button>
+        <div id="admin-nav-btns">
+          <button class="btn btn-block btn-gap" id="gpx-btn" onclick="downloadGPX()" style="background:#2a6b3a;color:#fff;border-color:#2a6b3a;font-size:0.95rem;padding:12px;justify-content:center;width:100%">
+            📥 Download GPX Route File
+          </button>
+          <button class="btn btn-ghost btn-block btn-gap" id="start-nav-btn" onclick="startNavigation()" style="font-size:0.8rem;padding:8px;justify-content:center;width:100%">▶ Built-in Navigation (basic)</button>
+        </div>
       </div>
       <div id="rt-result"></div>
     </div>
@@ -2181,6 +2205,8 @@ function findRoute() {
   drawRouteOnMap(S.route);
   showRouteResult(S.route);
   document.getElementById('nav-btns').style.display = 'block';
+  const adminBtns = document.getElementById('admin-nav-btns');
+  if (adminBtns) adminBtns.style.display = currentRole === 'admin' ? 'block' : 'none';
 }
 
 // Extract the sub-geometry of a road between two distances along it
@@ -2338,7 +2364,6 @@ function clearResult() {
   S.routeLayer.clearLayers();
   document.getElementById('nav-btns').style.display = 'none';
 }
-
 // ================================================================
 // GOOGLE MAPS EXPORT
 // ================================================================
@@ -2809,14 +2834,92 @@ function quickDeleteRoad(id) {
 }
 
 function refreshRouteSelects() {
-  const gpsOpt = gpsOriginWp
-    ? `<option value="gps_current">📍 Current Location</option>`
-    : '';
-  const opts = '<option value="">— Select location —</option>' + gpsOpt +
-    S.waypoints.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
-  document.getElementById('rt-from').innerHTML = opts;
-  document.getElementById('rt-to').innerHTML = '<option value="">— Select location —</option>' +
-    S.waypoints.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
+  const locations = [];
+  if (gpsOriginWp) locations.push({ id: 'gps_current', name: '📍 Current Location' });
+  S.waypoints.forEach(w => locations.push({ id: w.id, name: w.name }));
+  populateSearchSelect('from', locations);
+  populateSearchSelect('to', locations);
+}
+
+// ================================================================
+// SEARCHABLE SELECT DROPDOWNS
+// ================================================================
+const ssState = { from: { open:false, items:[], filtered:[], value:'' },
+                  to:   { open:false, items:[], filtered:[], value:'' } };
+
+function populateSearchSelect(which, items) {
+  ssState[which].items = items;
+  ssState[which].filtered = items;
+  renderSearchDropdown(which);
+}
+
+function openSearchSelect(which) {
+  const input = document.getElementById(`rt-${which}-input`);
+  input.readOnly = false;
+  input.select();
+  ssState[which].filtered = ssState[which].items;
+  renderSearchDropdown(which);
+  document.getElementById(`rt-${which}-dropdown`).classList.add('open');
+  ssState[which].open = true;
+}
+
+function closeSearchSelect(which, delay = 0) {
+  setTimeout(() => {
+    document.getElementById(`rt-${which}-dropdown`).classList.remove('open');
+    ssState[which].open = false;
+    // Restore display label if value set
+    const val = document.getElementById(`rt-${which}`).value;
+    const item = ssState[which].items.find(i => i.id === val);
+    const input = document.getElementById(`rt-${which}-input`);
+    input.value = item ? item.name : '';
+    input.readOnly = true;
+  }, delay);
+}
+
+function filterSearchSelect(which) {
+  const q = document.getElementById(`rt-${which}-input`).value.toLowerCase();
+  ssState[which].filtered = ssState[which].items.filter(i => i.name.toLowerCase().includes(q));
+  renderSearchDropdown(which);
+  document.getElementById(`rt-${which}-dropdown`).classList.add('open');
+}
+
+function renderSearchDropdown(which) {
+  const dd = document.getElementById(`rt-${which}-dropdown`);
+  const items = ssState[which].filtered;
+  if (!items.length) {
+    dd.innerHTML = '<div class="search-select-option empty">No locations found</div>';
+    return;
+  }
+  dd.innerHTML = items.map(i =>
+    `<div class="search-select-option" onmousedown="selectSearchOption('${which}','${i.id}',${JSON.stringify(i.name)})">${i.name}</div>`
+  ).join('');
+}
+
+function selectSearchOption(which, id, name) {
+  document.getElementById(`rt-${which}`).value = id;
+  document.getElementById(`rt-${which}-input`).value = name;
+  document.getElementById(`rt-${which}-dropdown`).classList.remove('open');
+  ssState[which].open = false;
+  clearResult();
+}
+
+function setSearchSelectValue(which, id, name) {
+  document.getElementById(`rt-${which}`).value = id;
+  document.getElementById(`rt-${which}-input`).value = name || '';
+}
+
+// ================================================================
+// CLEAR ROUTE
+// ================================================================
+function clearRoute() {
+  S.route = null;
+  S.routeLayer.clearLayers();
+  document.getElementById('nav-btns').style.display = 'none';
+  document.getElementById('rt-result').innerHTML = '';
+  setSearchSelectValue('from', '', '');
+  setSearchSelectValue('to', '', '');
+  document.getElementById('gps-origin-badge').style.display = 'none';
+  gpsOriginWp = null;
 }
 
 // ================================================================
@@ -2904,16 +3007,9 @@ function useCurrentLocationAsOrigin() {
     // Create a virtual "Current Location" waypoint (not saved)
     gpsOriginWp = { id: 'gps_current', name: 'Current Location', type: 'other', lat, lng };
 
-    // Add/update in the dropdown
-    const sel = document.getElementById('rt-from');
-    let opt = sel.querySelector('option[value="gps_current"]');
-    if (!opt) {
-      opt = document.createElement('option');
-      opt.value = 'gps_current';
-      sel.insertBefore(opt, sel.options[1]); // insert after "select" placeholder
-    }
-    opt.textContent = `📍 Current Location (±${acc}m)`;
-    sel.value = 'gps_current';
+    // Add to search select items and select it
+    refreshRouteSelects();
+    setSearchSelectValue('from', 'gps_current', `📍 Current Location (±${acc}m)`);
 
     // Show badge
     document.getElementById('gps-origin-badge').style.display = 'block';
