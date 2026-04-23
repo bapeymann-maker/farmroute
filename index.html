@@ -637,6 +637,17 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
     box-shadow:0 3px 12px rgba(0,0,0,0.5);
     transition:all 0.2s;">📍</button>
 
+  <!-- Follow-me button (only visible when GPS is active) -->
+  <button id="follow-btn" onclick="toggleFollowMe()" title="Keep map centered on my location" style="
+    display:none;position:absolute;bottom:130px;right:12px;z-index:1400;
+    width:44px;height:44px;
+    background:var(--soil-mid);border:2px solid var(--border-bright);
+    border-radius:50%;cursor:pointer;
+    display:none;align-items:center;justify-content:center;
+    font-size:1.1rem;
+    box-shadow:0 3px 12px rgba(0,0,0,0.5);
+    transition:all 0.2s;" title="Follow my location">🔒</button>
+
   <!-- GPS accuracy badge -->
   <div id="gps-badge" style="
     display:none;position:absolute;bottom:130px;right:12px;z-index:1400;
@@ -2275,9 +2286,16 @@ function buildNavSteps(route) {
     if (i === 0) {
       turn = { arrow: '⬆', text: 'Head ' + compassDir(departBear) };
     } else {
-      const pg = segGeom(segs[i-1]);
-      const appBear = approachBearing(pg);
-      turn = turnInfo(appBear, departBear);
+      // Walk back past any bridge edges (null roadId) to find the real previous segment
+      let prevIdx = i - 1;
+      while (prevIdx >= 0 && !segs[prevIdx].roadId) prevIdx--;
+      if (prevIdx >= 0) {
+        const pg = segGeom(segs[prevIdx]);
+        const appBear = pg.length >= 2 ? approachBearing(pg) : departBear;
+        turn = turnInfo(appBear, departBear);
+      } else {
+        turn = { arrow: '⬆', text: 'Head ' + compassDir(departBear) };
+      }
     }
 
     const drivenDist = Math.max(0.0001, (ed ?? roadLength(road)) - (sd ?? 0));
@@ -3050,6 +3068,26 @@ function toggleGpsLocate() {
   }
 }
 
+let gpsFollowMe = false;
+
+function toggleFollowMe() {
+  gpsFollowMe = !gpsFollowMe;
+  const btn = document.getElementById('follow-btn');
+  if (gpsFollowMe) {
+    btn.style.background = '#1a3a10';
+    btn.style.borderColor = '#5a9e3e';
+    btn.style.color = '#80e080';
+    btn.title = 'Following — tap to stop';
+    // Immediately pan to current position if known
+    if (gpsLocateMarker) map.panTo(gpsLocateMarker.getLatLng(), { animate: true, duration: 0.5 });
+  } else {
+    btn.style.background = '';
+    btn.style.borderColor = '';
+    btn.style.color = '';
+    btn.title = 'Follow my location';
+  }
+}
+
 function startGpsLocate() {
   if (!navigator.geolocation) {
     alert('GPS is not available on this device or browser.');
@@ -3060,6 +3098,7 @@ function startGpsLocate() {
   btn.style.background = '#1a3a10';
   btn.style.borderColor = '#5a9e3e';
   btn.textContent = '🟢';
+  document.getElementById('follow-btn').style.display = 'flex';
 
   gpsLocateWatchId = navigator.geolocation.watchPosition(
     onGpsLocatePos,
@@ -3070,6 +3109,7 @@ function startGpsLocate() {
 
 function stopGpsLocate() {
   gpsLocateActive = false;
+  gpsFollowMe = false;
   if (gpsLocateWatchId !== null) {
     navigator.geolocation.clearWatch(gpsLocateWatchId);
     gpsLocateWatchId = null;
@@ -3081,6 +3121,10 @@ function stopGpsLocate() {
   btn.style.background = '';
   btn.style.borderColor = '';
   btn.textContent = '📍';
+  const followBtn = document.getElementById('follow-btn');
+  followBtn.style.display = 'none';
+  followBtn.style.background = '';
+  followBtn.style.borderColor = '';
   document.getElementById('gps-badge').style.display = 'none';
 }
 
@@ -3112,6 +3156,8 @@ function onGpsLocatePos(pos) {
   } else {
     gpsLocatePulse.setLatLng([lat, lng]);
     gpsLocateMarker.setLatLng([lat, lng]);
+    // Pan continuously if follow-me is on
+    if (gpsFollowMe) map.panTo([lat, lng], { animate: true, duration: 0.3 });
   }
 
   // Accuracy circle
@@ -3382,6 +3428,17 @@ window.addEventListener('load', async () => {
   map.on('click',     onMapClick);
   map.on('dblclick',  onMapDblClick);
   map.on('mousemove', onMapMove);
+  // Disable follow-me if user manually moves the map
+  map.on('dragstart', () => {
+    if (gpsFollowMe) {
+      gpsFollowMe = false;
+      const btn = document.getElementById('follow-btn');
+      btn.style.background = '';
+      btn.style.borderColor = '';
+      btn.style.color = '';
+      btn.title = 'Follow my location';
+    }
+  });
   document.addEventListener('keydown', onKey);
 
   // Add login on Enter key
