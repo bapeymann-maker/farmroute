@@ -544,7 +544,7 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
         <label class="field-label">Starting From</label>
         <div style="display:flex;gap:5px;align-items:center">
           <div class="search-select" id="from-wrap" style="flex:1">
-            <input class="search-select-input" id="rt-from-input" placeholder="— Search locations —" autocomplete="off"
+            <input class="search-select-input" id="rt-from-input" placeholder="— Tap to browse or search —" autocomplete="off"
               oninput="filterSearchSelect('from')" onfocus="openSearchSelect('from')" onblur="closeSearchSelect('from')" readonly>
             <div class="search-select-dropdown" id="rt-from-dropdown"></div>
             <input type="hidden" id="rt-from">
@@ -560,7 +560,7 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
       <div class="field">
         <label class="field-label">Going To</label>
         <div class="search-select" id="to-wrap">
-          <input class="search-select-input" id="rt-to-input" placeholder="— Search locations —" autocomplete="off"
+          <input class="search-select-input" id="rt-to-input" placeholder="— Tap to browse or search —" autocomplete="off"
             oninput="filterSearchSelect('to')" onfocus="openSearchSelect('to')" onblur="closeSearchSelect('to')" readonly>
           <div class="search-select-dropdown" id="rt-to-dropdown"></div>
           <input type="hidden" id="rt-to">
@@ -2862,6 +2862,7 @@ function openSearchSelect(which) {
   const input = document.getElementById(`rt-${which}-input`);
   input.readOnly = false;
   input.select();
+  // Show full list — user can scroll or type to filter
   ssState[which].filtered = ssState[which].items;
   renderSearchDropdown(which);
   document.getElementById(`rt-${which}-dropdown`).classList.add('open');
@@ -2880,7 +2881,9 @@ function closeSearchSelect(which) {
 
 function filterSearchSelect(which) {
   const q = document.getElementById(`rt-${which}-input`).value.toLowerCase();
-  ssState[which].filtered = ssState[which].items.filter(i => i.name.toLowerCase().includes(q));
+  ssState[which].filtered = q
+    ? ssState[which].items.filter(i => i.name.toLowerCase().includes(q))
+    : ssState[which].items;
   renderSearchDropdown(which);
   document.getElementById(`rt-${which}-dropdown`).classList.add('open');
 }
@@ -2896,15 +2899,25 @@ function renderSearchDropdown(which) {
     `<div class="search-select-option" data-id="${i.id}" data-name="${i.name.replace(/"/g,'&quot;')}">${i.name}</div>`
   ).join('');
 
-  // Attach events directly to each option node — works on mobile and desktop
   dd.querySelectorAll('.search-select-option[data-id]').forEach(el => {
-    const pick = (e) => {
+    // Use touchend for mobile (allows scroll without triggering selection)
+    // Use mousedown for desktop (before blur fires)
+    el.addEventListener('mousedown', e => {
       e.preventDefault();
-      e.stopPropagation();
       selectSearchOption(which, el.dataset.id, el.dataset.name);
-    };
-    el.addEventListener('mousedown', pick);
-    el.addEventListener('touchstart', pick, { passive: false });
+    });
+    el.addEventListener('touchend', e => {
+      // Only select if the touch didn't scroll (moved less than 10px)
+      const touch = e.changedTouches[0];
+      const startY = el._touchStartY ?? touch.clientY;
+      if (Math.abs(touch.clientY - startY) < 10) {
+        e.preventDefault();
+        selectSearchOption(which, el.dataset.id, el.dataset.name);
+      }
+    });
+    el.addEventListener('touchstart', e => {
+      el._touchStartY = e.touches[0].clientY;
+    }, { passive: true });
   });
 }
 
