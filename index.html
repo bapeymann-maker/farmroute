@@ -1856,14 +1856,15 @@ function buildNodeIndex(allowed) {
   const find = k => { if (parent[k] === undefined) parent[k] = k; return parent[k] === k ? k : (parent[k] = find(parent[k])); };
   const union = (a, b) => { parent[find(a)] = find(b); };
 
-  // Merge nodes within 80m (~0.0008 degrees)
-  const THRESH = 0.0015;
+  // Merge nodes within 50m — handles OSM T-intersections where one road's
+  // endpoint is slightly offset from another road's midpoint crossing
+  const THRESH = 0.0005;
   for (let i = 0; i < pts.length; i++) {
     for (let j = i + 1; j < pts.length; j++) {
       if (Math.abs(pts[i].lat - pts[j].lat) > THRESH) continue;
       if (Math.abs(pts[i].lng - pts[j].lng) > THRESH) continue;
       const d = haversine(pts[i].lat, pts[i].lng, pts[j].lat, pts[j].lng);
-      if (d < 0.15) union(pts[i].key, pts[j].key); // merge if within 150m
+      if (d < 0.05) union(pts[i].key, pts[j].key); // merge if within 50m
     }
   }
 
@@ -2006,9 +2007,9 @@ function buildRoutingGraph(allowed, extraSplits = {}) {
     }
   }
 
-  // Post-process: add very short bridge edges (≤20m) between graph nodes
-  // that are nearly coincident but have slightly different keys due to OSM
-  // coordinate rounding. This fixes T-intersections without creating shortcuts.
+  // Post-process: add tiny bridge edges (≤5m) between nearly-identical nodes
+  // that differ only due to OSM coordinate rounding. 5m is too small to create
+  // routing shortcuts but fixes genuine duplicate endpoint issues.
   const nodeCoords = {};
   for (const k of Object.keys(G)) {
     let la, lo;
@@ -2019,12 +2020,12 @@ function buildRoutingGraph(allowed, extraSplits = {}) {
   }
 
   const nkeys = Object.keys(nodeCoords);
-  const BRIDGE_MAX = 0.02; // 20m — only connect nearly-coincident nodes
+  const BRIDGE_MAX = 0.005; // 5m only — coordinate rounding fix, not a routing shortcut
   for (let i = 0; i < nkeys.length; i++) {
     for (let j = i+1; j < nkeys.length; j++) {
       const [la1,lo1] = nodeCoords[nkeys[i]];
       const [la2,lo2] = nodeCoords[nkeys[j]];
-      if (Math.abs(la1-la2) > 0.0003) continue; // fast reject ~30m
+      if (Math.abs(la1-la2) > 0.00008) continue;
       const d = haversine(la1,lo1,la2,lo2);
       if (d <= BRIDGE_MAX) {
         if (!G[nkeys[i]]) G[nkeys[i]] = [];
@@ -3910,7 +3911,6 @@ function closeJdModal() {
   jdParsed = { headers: [], rows: [] };
   jdPreviewResult = [];
 }
-// 20260427 
 </script>
 </body>
 </html>
