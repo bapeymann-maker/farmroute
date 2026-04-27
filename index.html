@@ -1952,12 +1952,36 @@ function buildRoutingGraph(allowed, extraSplits = {}) {
 
       const crossings = findCrossings(rA.geometry, rB.geometry);
       for (const c of crossings) {
-        const key = `x_${c.pt[0].toFixed(5)}_${c.pt[1].toFixed(5)}`;
         const dA = distAlongGeom(rA.geometry, c.segA, c.pt);
         const dB = distAlongGeom(rB.geometry, c.segB, c.pt);
         const totA = roadLength(rA), totB = roadLength(rB);
-        if (dA > 0.005 && dA < totA-0.005) splitsByRoad[rA.id].push({ dist:dA, key });
-        if (dB > 0.005 && dB < totB-0.005) splitsByRoad[rB.id].push({ dist:dB, key });
+
+        // Resolve crossing key: if the crossing is near a road endpoint,
+        // use that endpoint's canonical key so they share the same graph node.
+        // This fixes T-intersections where road B starts/ends at the crossing.
+        const resolveKey = (road, dist, total, crossPt) => {
+          if (dist < 0.05) return resolveNode(nodeIndex, road.geometry[0]);
+          if (dist > total - 0.05) return resolveNode(nodeIndex, road.geometry[road.geometry.length-1]);
+          return `x_${crossPt[0].toFixed(5)}_${crossPt[1].toFixed(5)}`;
+        };
+
+        const keyA = resolveKey(rA, dA, totA, c.pt);
+        const keyB = resolveKey(rB, dB, totB, c.pt);
+
+        // Both roads should use the same crossing key so they share the node
+        const sharedKey = (keyA.startsWith('x_') && keyB.startsWith('x_')) ? keyA :
+                          (!keyA.startsWith('x_') ? keyA :
+                          (!keyB.startsWith('x_') ? keyB : keyA));
+
+        if (dA > 0.005 && dA < totA-0.005) splitsByRoad[rA.id].push({ dist:dA, key:sharedKey });
+        if (dB > 0.005 && dB < totB-0.005) splitsByRoad[rB.id].push({ dist:dB, key:sharedKey });
+
+        // If crossing is near road A's endpoint, ensure road B gets a split with that endpoint key
+        if (dA <= 0.05 && dB > 0.005 && dB < totB-0.005)
+          splitsByRoad[rB.id].push({ dist:dB, key:keyA });
+        // If crossing is near road B's endpoint, ensure road A gets a split with that endpoint key
+        if (dB <= 0.05 && dA > 0.005 && dA < totA-0.005)
+          splitsByRoad[rA.id].push({ dist:dA, key:keyB });
       }
     }
   }
