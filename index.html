@@ -2290,12 +2290,28 @@ function buildNavSteps(route) {
     notes: ''
   });
 
-  // Merge consecutive steps on the same road into one
+  // Remove micro-steps caused by bridge edges (< 50m and no real turn)
+  // These appear as very short "continue straight" steps between road name changes
+  const filtered = steps.filter((step, i) => {
+    if (step.type !== 'step') return true;
+    if (step.distKm >= 0.05) return true; // keep anything ≥ 50m
+    // Keep very short steps only if they involve a real turn (not straight/slight)
+    const straight = ['⬆','↗','↖'].includes(step.arrow);
+    return !straight; // drop short straight micro-steps, keep short turns
+  });
+
+  // Normalize name for merge comparison — strip trailing (Segment) / (Segment N)
+  const baseName = n => n.replace(/\s*\(Segment[^)]*\)\s*$/i, '').trim();
+
+  // Merge consecutive steps on the same base road into one
   const merged = [];
-  for (const step of steps) {
+  for (const step of filtered) {
     const prev = merged[merged.length - 1];
-    if (prev && step.type === 'step' && prev.type === 'step' && step.roadName === prev.roadName) {
+    if (prev && step.type === 'step' && prev.type === 'step' &&
+        baseName(step.roadName) === baseName(prev.roadName)) {
       prev.distKm += step.distKm;
+      // Prefer the cleaner name (non-segment version)
+      if (!step.roadName.match(/\(Segment/i)) prev.roadName = step.roadName;
     } else {
       merged.push(step);
     }
@@ -3894,6 +3910,7 @@ function closeJdModal() {
   jdParsed = { headers: [], rows: [] };
   jdPreviewResult = [];
 }
+// 20260427 
 </script>
 </body>
 </html>
