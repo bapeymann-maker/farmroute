@@ -3455,6 +3455,7 @@ window.addEventListener('load', async () => {
 
   S.osmRoadLayers   = L.layerGroup().addTo(map);
   S.routeLayer      = L.layerGroup().addTo(map);
+  S.fieldLayer      = L.layerGroup().addTo(map);
   S.drawLayer       = L.layerGroup().addTo(map);
   S.drawPreviewLayer= L.layerGroup().addTo(map);
   S.segPickLayer    = L.layerGroup().addTo(map);
@@ -3773,9 +3774,8 @@ const CLUSTER_COLORS = [
 // ================================================================
 // FIELD BOUNDARIES
 // ================================================================
-S.fieldLayer    = L.layerGroup().addTo(map);
 S.fieldsVisible = true;
-S.fields        = []; // array of {id, name, acres, region, coordinates}
+S.fields        = [];
 
 const REGION_COLORS = {
   'North':  { fill:'rgba(255,200,50,0.18)',  stroke:'#f0b429' },
@@ -3794,18 +3794,40 @@ function importFieldBoundaries(event) {
     try {
       let raw = e.target.result;
 
-      // Most robust approach: find the first { and last } in the file
-      // Works regardless of CSV headers, line endings, or quoting
-      const start = raw.indexOf('{');
-      const end   = raw.lastIndexOf('}');
-      if (start === -1 || end === -1) throw new Error('No JSON object found in file');
+      // Strip BOM if present
+      if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);
+      // Normalize line endings
+      raw = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-      let json = raw.slice(start, end + 1);
+      let geojson = null;
 
-      // Unescape doubled quotes from CSV export ("" → ")
-      json = json.replace(/""/g, '"');
+      // Strategy 1: try parsing the whole file directly (plain .geojson)
+      try { geojson = JSON.parse(raw); } catch(e1) {}
 
-      const geojson = JSON.parse(json);
+      // Strategy 2: extract between first { and last }, unescape CSV ""
+      if (!geojson) {
+        const start = raw.indexOf('{');
+        const end   = raw.lastIndexOf('}');
+        if (start !== -1 && end !== -1) {
+          const slice = raw.slice(start, end + 1).replace(/""/g, '"');
+          try { geojson = JSON.parse(slice); } catch(e2) {}
+        }
+      }
+
+      // Strategy 3: find largest {...} block across lines
+      if (!geojson) {
+        const cleaned = raw.split('\n')
+          .filter(l => !l.trim().match(/^[a-z_]+$/i)) // skip header rows
+          .join('')
+          .replace(/""/g, '"');
+        const start = cleaned.indexOf('{');
+        const end   = cleaned.lastIndexOf('}');
+        if (start !== -1 && end !== -1) {
+          try { geojson = JSON.parse(cleaned.slice(start, end + 1)); } catch(e3) {}
+        }
+      }
+
+      if (!geojson) throw new Error('Could not extract valid JSON — try saving as a plain .geojson file');
       loadFieldsFromGeoJSON(geojson);
     } catch(err) {
       setStatus('warn', `⚠ Could not parse field file: ${err.message}`);
