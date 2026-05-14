@@ -234,6 +234,8 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
 /* GPS marker */
 .gps-dot{width:14px;height:14px;background:#4af;border:3px solid #fff;border-radius:50%;box-shadow:0 0 10px rgba(70,170,255,0.8);}
 .gps-pulse{width:38px;height:38px;background:rgba(70,170,255,0.15);border:1px solid rgba(70,170,255,0.35);border-radius:50%;animation:gpsPulse 1.6s ease-out infinite;}
+.field-label{font-family:'Barlow Condensed',sans-serif;font-size:0.62rem;font-weight:700;color:#fff;text-shadow:0 0 3px rgba(0,0,0,0.9),0 0 6px rgba(0,0,0,0.6);white-space:nowrap;pointer-events:none;transform:translate(-50%,-50%);position:absolute;}
+.field-tooltip.leaflet-tooltip{background:#1a1208;border:1px solid #f0b429;color:#fff;font-family:'Barlow Condensed',sans-serif;font-size:0.85rem;border-radius:4px;padding:4px 8px;}
 @keyframes gpsPulse{0%{transform:scale(0.4);opacity:1;}100%{transform:scale(1.8);opacity:0;}}
 
 /* Leaflet overrides for dark theme */
@@ -524,6 +526,8 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
           <input type="file" id="imp-file" accept=".json" style="display:none" onchange="importData(event)">
           <button class="btn btn-ghost btn-sm" onclick="loadSampleData()">📋 Sample Farm</button>
           <button class="btn btn-ghost btn-sm" id="debug-btn" onclick="toggleDebugMode()" title="Show which roads are connected to each other">🔬 Debug Network</button>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('fields-file').click()" title="Import GeoJSON field boundaries">🌱 Load Fields</button>
+          <input type="file" id="fields-file" accept=".json,.geojson" style="display:none" onchange="importFieldBoundaries(event)">
           <button class="btn btn-danger btn-sm" onclick="clearAll()">🗑 Clear All</button>
         </div>
       </div>
@@ -601,6 +605,10 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
       <div class="legend-item"><div class="legend-swatch" style="background:var(--road-empty)"></div>Empty Semi</div>
       <div class="legend-item"><div class="legend-swatch" style="background:#888;"></div>OSM Roads</div>
       <div class="legend-item"><div class="legend-swatch" style="background:#e84040;height:5px"></div>Route</div>
+      <div class="legend-item" id="fields-legend-item" style="display:none;cursor:pointer" onclick="toggleFieldBoundaries()" title="Toggle field boundaries">
+        <div class="legend-swatch" style="background:rgba(255,200,50,0.4);border:2px solid #f0b429;"></div>
+        <span id="fields-legend-label">Fields</span>
+      </div>
       <div id="debug-legend" style="display:none;width:100%;margin-top:4px;padding-top:4px;border-top:1px solid var(--border);">
         <div class="legend-item"><div class="legend-swatch" style="background:#00e5ff"></div>🔬 Reachable</div>
         <div class="legend-item"><div class="legend-swatch" style="background:#ff6b00"></div>🔬 Isolated</div>
@@ -3399,6 +3407,7 @@ async function loadData() {
     if (data?.data) {
       S.waypoints     = data.data.waypoints     || [];
       S.approvedRoads = data.data.approvedRoads || [];
+      loadFieldsFromSupabase(data.data);
     }
   } catch(e) {
     console.warn('loadData error:', e);
@@ -3411,7 +3420,7 @@ async function persist() {
   try {
     const { error } = await sb
       .from('farm_data')
-      .upsert({ id: 1, data: { waypoints: S.waypoints, approvedRoads: S.approvedRoads } });
+      .upsert({ id: 1, data: { waypoints: S.waypoints, approvedRoads: S.approvedRoads, fields: S.fields || [] } });
     if (error) throw error;
     setSyncDot('ready');
   } catch(e) {
@@ -3760,6 +3769,130 @@ const CLUSTER_COLORS = [
   '#00e5ff','#00ff88','#ffee00','#ff88ff','#88aaff',
   '#ff8800','#00ffdd','#ff4488','#aaff00','#ff6644'
 ];
+
+// ================================================================
+// FIELD BOUNDARIES
+// ================================================================
+S.fieldLayer    = L.layerGroup().addTo(map);
+S.fieldsVisible = true;
+S.fields        = []; // array of {id, name, acres, region, coordinates}
+
+const REGION_COLORS = {
+  'North':  { fill:'rgba(255,200,50,0.18)',  stroke:'#f0b429' },
+  'South':  { fill:'rgba(100,200,255,0.18)', stroke:'#3ab4f2' },
+  'East':   { fill:'rgba(150,255,100,0.18)', stroke:'#5ac43a' },
+  'West':   { fill:'rgba(255,130,80,0.18)',  stroke:'#f07030' },
+  'default':{ fill:'rgba(200,160,255,0.18)', stroke:'#9966cc' }
+};
+
+function importFieldBoundaries(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  event.target.value = '';
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      let raw = e.target.result;
+      // Handle Supabase CSV export — strip outer CSV quotes and unescape
+      if (raw.trimStart().startsWith('"')) {
+        raw = raw.trim();
+        if (raw.startsWith('"') && raw.endsWith('"')) raw = raw.slice(1,-1);
+        raw = raw.replace(/""/g, '"');
+        // Skip header row if present
+        const firstNewline = raw.indexOf('\n');
+        if (firstNewline > 0 && !raw.trimStart().startsWith('{')) {
+          raw = raw.slice(firstNewline+1).trim();
+          if (raw.startsWith('"')) { raw = raw.slice(1); if (raw.endsWith('"')) raw = raw.slice(0,-1); raw = raw.replace(/""/g,'"'); }
+        }
+      }
+      const geojson = JSON.parse(raw);
+      loadFieldsFromGeoJSON(geojson);
+    } catch(err) {
+      setStatus('warn', `⚠ Could not parse field file: ${err.message}`);
+    }
+  };
+  reader.readAsText(file);
+}
+
+function loadFieldsFromGeoJSON(geojson) {
+  const features = geojson.type === 'FeatureCollection' ? geojson.features :
+                   geojson.type === 'Feature' ? [geojson] : [];
+  if (!features.length) { setStatus('warn', '⚠ No field features found in file'); return; }
+
+  S.fields = features.map(f => {
+    const props = f.properties || {};
+    // GeoJSON coords are [lng, lat] — convert to [lat, lng] for Leaflet
+    const coords = (f.geometry?.coordinates?.[0] || []).map(c => [c[1], c[0]]);
+    return {
+      id:     props.id || Math.random().toString(36).slice(2),
+      name:   props.name || props.field_name || props.Name || 'Unnamed Field',
+      acres:  props.acres || props.area_acres || null,
+      region: props.region || props.Region || 'default',
+      coords
+    };
+  }).filter(f => f.coords.length >= 3);
+
+  renderFieldBoundaries();
+  saveFieldsToSupabase();
+  setStatus('ready', `✓ ${S.fields.length} field boundaries loaded`);
+  document.getElementById('fields-legend-item').style.display = 'flex';
+}
+
+function renderFieldBoundaries() {
+  S.fieldLayer.clearLayers();
+  if (!S.fieldsVisible || !S.fields.length) return;
+
+  S.fields.forEach(field => {
+    const colors = REGION_COLORS[field.region] || REGION_COLORS.default;
+    const poly = L.polygon(field.coords, {
+      color:       colors.stroke,
+      weight:      2,
+      opacity:     0.9,
+      fillColor:   colors.fill,
+      fillOpacity: 1
+    });
+
+    const acreStr = field.acres ? ` · ${parseFloat(field.acres).toFixed(1)} ac` : '';
+    const regionStr = field.region && field.region !== 'default' ? ` · ${field.region}` : '';
+    poly.bindTooltip(`<b>${field.name}</b>${acreStr}${regionStr}`, {
+      sticky: true, className: 'field-tooltip'
+    });
+
+    // Add field name label at centroid
+    const center = poly.getBounds().getCenter();
+    const label = L.divIcon({
+      html: `<div class="field-label">${field.name}</div>`,
+      className: '', iconSize: null
+    });
+    L.marker(center, { icon: label, interactive: false }).addTo(S.fieldLayer);
+    poly.addTo(S.fieldLayer);
+  });
+}
+
+function toggleFieldBoundaries() {
+  S.fieldsVisible = !S.fieldsVisible;
+  const lbl = document.getElementById('fields-legend-label');
+  lbl.textContent = S.fieldsVisible ? 'Fields' : 'Fields (hidden)';
+  lbl.style.opacity = S.fieldsVisible ? '1' : '0.4';
+  renderFieldBoundaries();
+}
+
+async function saveFieldsToSupabase() {
+  if (!supabase || !S.fields.length) return;
+  // Store alongside other farm data
+  const { data } = await supabase.from('farm_data').select('data').eq('id', 1).single();
+  const existing = data?.data || {};
+  existing.fields = S.fields;
+  await supabase.from('farm_data').upsert({ id: 1, data: existing });
+}
+
+async function loadFieldsFromSupabase(farmData) {
+  if (farmData?.fields?.length) {
+    S.fields = farmData.fields;
+    renderFieldBoundaries();
+    document.getElementById('fields-legend-item').style.display = 'flex';
+  }
+}
 
 function toggleDebugMode() {
   debugMode = !debugMode;
