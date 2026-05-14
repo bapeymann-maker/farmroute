@@ -3792,19 +3792,24 @@ function importFieldBoundaries(event) {
   const reader = new FileReader();
   reader.onload = e => {
     try {
-      let raw = e.target.result;
-      // Handle Supabase CSV export — strip outer CSV quotes and unescape
-      if (raw.trimStart().startsWith('"')) {
-        raw = raw.trim();
-        if (raw.startsWith('"') && raw.endsWith('"')) raw = raw.slice(1,-1);
-        raw = raw.replace(/""/g, '"');
-        // Skip header row if present
-        const firstNewline = raw.indexOf('\n');
-        if (firstNewline > 0 && !raw.trimStart().startsWith('{')) {
-          raw = raw.slice(firstNewline+1).trim();
-          if (raw.startsWith('"')) { raw = raw.slice(1); if (raw.endsWith('"')) raw = raw.slice(0,-1); raw = raw.replace(/""/g,'"'); }
-        }
+      let raw = e.target.result.trim();
+
+      // Find the line that looks like JSON (starts with { or ")
+      const lines = raw.split('\n');
+      let jsonLine = lines.find(l => {
+        const t = l.trim();
+        return t.startsWith('{') || t.startsWith('"{"') || t.startsWith('"{') || t.startsWith('""{');
+      }) || lines[lines.length - 1];
+
+      raw = jsonLine.trim();
+
+      // Strip surrounding CSV double-quotes if present
+      if (raw.startsWith('"') && raw.endsWith('"')) {
+        raw = raw.slice(1, -1);
       }
+      // Unescape doubled quotes ("" → ")
+      raw = raw.replace(/""/g, '"');
+
       const geojson = JSON.parse(raw);
       loadFieldsFromGeoJSON(geojson);
     } catch(err) {
