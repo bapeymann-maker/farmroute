@@ -3792,25 +3792,20 @@ function importFieldBoundaries(event) {
   const reader = new FileReader();
   reader.onload = e => {
     try {
-      let raw = e.target.result.trim();
+      let raw = e.target.result;
 
-      // Find the line that looks like JSON (starts with { or ")
-      const lines = raw.split('\n');
-      let jsonLine = lines.find(l => {
-        const t = l.trim();
-        return t.startsWith('{') || t.startsWith('"{"') || t.startsWith('"{') || t.startsWith('""{');
-      }) || lines[lines.length - 1];
+      // Most robust approach: find the first { and last } in the file
+      // Works regardless of CSV headers, line endings, or quoting
+      const start = raw.indexOf('{');
+      const end   = raw.lastIndexOf('}');
+      if (start === -1 || end === -1) throw new Error('No JSON object found in file');
 
-      raw = jsonLine.trim();
+      let json = raw.slice(start, end + 1);
 
-      // Strip surrounding CSV double-quotes if present
-      if (raw.startsWith('"') && raw.endsWith('"')) {
-        raw = raw.slice(1, -1);
-      }
-      // Unescape doubled quotes ("" → ")
-      raw = raw.replace(/""/g, '"');
+      // Unescape doubled quotes from CSV export ("" → ")
+      json = json.replace(/""/g, '"');
 
-      const geojson = JSON.parse(raw);
+      const geojson = JSON.parse(json);
       loadFieldsFromGeoJSON(geojson);
     } catch(err) {
       setStatus('warn', `⚠ Could not parse field file: ${err.message}`);
