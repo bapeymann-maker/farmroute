@@ -2803,6 +2803,7 @@ function renderAll() {
   renderWpMarkers();
   renderApprovedRoads();
   refreshRouteSelects();
+  updateFieldsUI();
 }
 
 function renderWpMarkers() {
@@ -3005,12 +3006,12 @@ function setMode(m) {
   document.getElementById('tab-admin').classList.toggle('active', m === 'admin');
   document.getElementById('tab-emp').classList.toggle('active', m === 'employee');
   if (m === 'employee') {
-    // Always default to tractor with no implement for employees
     S.vehicle = 'tractor';
     S.impl = 'none';
     refreshRouteSelects();
     clearResult();
     setTool('none');
+    updateFieldsUI();
   }
 }
 function setVehicle(v) {
@@ -3905,16 +3906,18 @@ function renderFieldBoundaries() {
 
 function updateFieldsUI() {
   const hasFields = S.fields && S.fields.length > 0;
-  // Show/hide legend item
-  document.getElementById('fields-legend-item').style.display = hasFields ? 'flex' : 'none';
-  // Show/hide route planner toggle
+  const on = S.fieldsVisible;
+
+  // Legend item (shared, always in DOM)
+  const legendItem = document.getElementById('fields-legend-item');
+  if (legendItem) legendItem.style.display = hasFields ? 'flex' : 'none';
+  const lbl = document.getElementById('fields-legend-label');
+  if (lbl) { lbl.textContent = on ? 'Fields' : 'Fields (hidden)'; lbl.style.opacity = on ? '1' : '0.4'; }
+
+  // Route planner toggle button
   const empToggle = document.getElementById('emp-fields-toggle');
   if (empToggle) empToggle.style.display = hasFields ? 'block' : 'none';
-  // Update button labels
-  const on = S.fieldsVisible;
-  const lbl = document.getElementById('fields-legend-label');
   const empLbl = document.getElementById('emp-fields-label');
-  if (lbl) { lbl.textContent = on ? 'Fields' : 'Fields (hidden)'; lbl.style.opacity = on ? '1' : '0.4'; }
   if (empLbl) empLbl.textContent = on ? 'Hide Field Boundaries' : 'Show Field Boundaries';
   const empBtn = document.getElementById('emp-fields-btn');
   if (empBtn) {
