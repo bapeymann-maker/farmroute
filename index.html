@@ -543,6 +543,18 @@ html,body{height:100%;overflow:hidden;font-family:'Barlow',sans-serif;background
         </div>
       </div>
       <div id="tractor-opts" style="display:none"></div>
+      <!-- Fields toggle — visible when fields are loaded -->
+      <div id="emp-fields-toggle" style="display:none;margin-bottom:6px">
+        <button onclick="toggleFieldBoundaries()" id="emp-fields-btn" style="
+          width:100%;padding:7px 10px;border-radius:6px;cursor:pointer;
+          background:rgba(255,200,50,0.12);border:1px solid #f0b429;
+          color:#f0b429;font-family:'Barlow Condensed',sans-serif;
+          font-size:0.78rem;font-weight:700;text-transform:uppercase;
+          letter-spacing:0.5px;display:flex;align-items:center;gap:6px;
+          justify-content:center;transition:all 0.15s;">
+          🌱 <span id="emp-fields-label">Show Field Boundaries</span>
+        </button>
+      </div>
       <div class="sec-hdr"><span class="sec-label">Origin & Destination</span></div>
       <div class="field">
         <label class="field-label">Starting From</label>
@@ -3857,7 +3869,7 @@ function loadFieldsFromGeoJSON(geojson) {
   renderFieldBoundaries();
   saveFieldsToSupabase();
   setStatus('ready', `✓ ${S.fields.length} field boundaries loaded`);
-  document.getElementById('fields-legend-item').style.display = 'flex';
+  updateFieldsUI();
 }
 
 function renderFieldBoundaries() {
@@ -3891,12 +3903,30 @@ function renderFieldBoundaries() {
   });
 }
 
+function updateFieldsUI() {
+  const hasFields = S.fields && S.fields.length > 0;
+  // Show/hide legend item
+  document.getElementById('fields-legend-item').style.display = hasFields ? 'flex' : 'none';
+  // Show/hide route planner toggle
+  const empToggle = document.getElementById('emp-fields-toggle');
+  if (empToggle) empToggle.style.display = hasFields ? 'block' : 'none';
+  // Update button labels
+  const on = S.fieldsVisible;
+  const lbl = document.getElementById('fields-legend-label');
+  const empLbl = document.getElementById('emp-fields-label');
+  if (lbl) { lbl.textContent = on ? 'Fields' : 'Fields (hidden)'; lbl.style.opacity = on ? '1' : '0.4'; }
+  if (empLbl) empLbl.textContent = on ? 'Hide Field Boundaries' : 'Show Field Boundaries';
+  const empBtn = document.getElementById('emp-fields-btn');
+  if (empBtn) {
+    empBtn.style.background = on ? 'rgba(255,200,50,0.22)' : 'rgba(255,200,50,0.06)';
+    empBtn.style.opacity = on ? '1' : '0.6';
+  }
+}
+
 function toggleFieldBoundaries() {
   S.fieldsVisible = !S.fieldsVisible;
-  const lbl = document.getElementById('fields-legend-label');
-  lbl.textContent = S.fieldsVisible ? 'Fields' : 'Fields (hidden)';
-  lbl.style.opacity = S.fieldsVisible ? '1' : '0.4';
   renderFieldBoundaries();
+  updateFieldsUI();
 }
 
 async function saveFieldsToSupabase() {
@@ -3912,7 +3942,7 @@ async function loadFieldsFromSupabase(farmData) {
   if (farmData?.fields?.length) {
     S.fields = farmData.fields;
     renderFieldBoundaries();
-    document.getElementById('fields-legend-item').style.display = 'flex';
+    updateFieldsUI();
   }
 }
 
